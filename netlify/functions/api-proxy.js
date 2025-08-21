@@ -73,6 +73,9 @@ exports.handler = async function(event, context) {
     
     const { apiKey, baseUrl } = targetProvider;
     const apiUrl = `${baseUrl}${endpoint}`;
+    
+    // --- DEBUGGING IMPROVEMENT: Log the exact URL being called ---
+    console.log(`Making API call to: ${method} ${apiUrl}`);
 
     const headers = {
       'Authorization': `Bearer ${apiKey}`,
