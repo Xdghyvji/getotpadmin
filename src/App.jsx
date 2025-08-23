@@ -443,14 +443,11 @@ const ManageServicesPage = () => {
     const [services, setServices] = useState([]);
     const [providers, setProviders] = useState([]);
     const [loading, setLoading] = useState({ services: true, providers: true, import: false });
+    const [selectedServices, setSelectedServices] = useState([]);
     
-    const [serviceName, setServiceName] = useState('');
-    const [serviceIcon, setServiceIcon] = useState('');
-    const [servicePrice, setServicePrice] = useState('');
-
-    const [selectedProvider, setSelectedProvider] = useState('');
-    const [importCountry, setImportCountry] = useState('any');
-    const [commission, setCommission] = useState(20);
+    // Form States
+    const [manualForm, setManualForm] = useState({ name: '', icon: '', price: '' });
+    const [importForm, setImportForm] = useState({ provider: '', country: 'any', commission: 20, serviceName: '' });
 
     useEffect(() => {
         const unsubServices = onSnapshot(collection(db, "services"), (snapshot) => {
@@ -466,44 +463,95 @@ const ManageServicesPage = () => {
 
     const handleManualAdd = async (e) => {
         e.preventDefault();
-        if (!serviceName || !servicePrice) return;
+        const { name, icon, price } = manualForm;
+        if (!name || !price) return;
         await addDoc(collection(db, "services"), {
-            name: serviceName, icon: serviceIcon, price: parseFloat(servicePrice),
-            status: 'active', provider: 'manual'
+            name, icon, price: parseFloat(price), status: 'active', provider: 'manual'
         });
-        setServiceName(''); setServiceIcon(''); setServicePrice('');
+        setManualForm({ name: '', icon: '', price: '' });
     };
 
-    const handleImport = async (e) => {
+    const handleImport = async (e, isSingle) => {
         e.preventDefault();
-        if (!selectedProvider || !commission) return;
+        const { provider, country, commission, serviceName } = importForm;
+        if (!provider || commission < 0) return;
+        if (isSingle && !serviceName) {
+            alert("Please enter a specific service name to import.");
+            return;
+        }
+
         setLoading(prev => ({ ...prev, import: true }));
         
-        const result = await apiCall(selectedProvider, `/guest/products/${importCountry}/any`);
+        const endpoint = isSingle ? `/guest/prices?country=${country}&product=${serviceName}` : `/guest/products/${country}/any`;
+        const result = await apiCall(provider, endpoint);
         
         if (result && !result.error) {
             const batch = writeBatch(db);
-            Object.entries(result).forEach(([name, details]) => {
-                if(typeof details === 'object' && details !== null && details.Price) {
-                    const newPrice = details.Price * (1 + commission / 100);
+            let importCount = 0;
+            const processPriceData = (name, details) => {
+                const priceKey = details.Price ?? details.cost;
+                if (priceKey) {
+                    const newPrice = priceKey * (1 + commission / 100);
                     const serviceRef = doc(collection(db, "services"));
                     batch.set(serviceRef, {
                         name: name.charAt(0).toUpperCase() + name.slice(1),
-                        price: parseFloat(newPrice.toFixed(2)), provider: selectedProvider,
-                        originalPrice: details.Price, qty: details.Qty, status: 'active'
+                        price: parseFloat(newPrice.toFixed(2)), provider: provider,
+                        originalPrice: priceKey, qty: details.Qty ?? details.count, status: 'active'
                     });
+                    importCount++;
                 }
-            });
-            await batch.commit();
-            alert(`${Object.keys(result).length} services imported successfully!`);
+            };
+
+            if (isSingle) {
+                // Response for single product is nested
+                const productData = result[serviceName];
+                if (productData) {
+                    const countryData = productData[country];
+                    if (countryData) {
+                        const firstOperator = Object.keys(countryData)[0];
+                        if (firstOperator) processPriceData(serviceName, countryData[firstOperator]);
+                    }
+                }
+            } else {
+                Object.entries(result).forEach(([name, details]) => {
+                    if (typeof details === 'object' && details !== null) {
+                        processPriceData(name, details);
+                    }
+                });
+            }
+
+            if (importCount > 0) {
+                await batch.commit();
+                alert(`${importCount} service(s) imported successfully!`);
+            } else {
+                alert("No valid services found to import from the provider's response.");
+            }
         } else {
-            alert(`Failed to import services: ${result.error}`);
+            alert(`Failed to import services: ${result.error || 'Unknown error'}`);
         }
         setLoading(prev => ({ ...prev, import: false }));
     };
 
-    const handleDelete = async (id) => {
-        if (window.confirm("Are you sure?")) await deleteDoc(doc(db, "services", id));
+    const handleSelect = (id) => {
+        setSelectedServices(prev => prev.includes(id) ? prev.filter(sId => sId !== id) : [...prev, id]);
+    };
+    
+    const handleSelectAll = (e) => {
+        if (e.target.checked) {
+            setSelectedServices(services.map(s => s.id));
+        } else {
+            setSelectedServices([]);
+        }
+    };
+
+    const handleBulkDelete = async () => {
+        if (selectedServices.length === 0 || !window.confirm(`Delete ${selectedServices.length} selected services?`)) return;
+        const batch = writeBatch(db);
+        selectedServices.forEach(id => {
+            batch.delete(doc(db, "services", id));
+        });
+        await batch.commit();
+        setSelectedServices([]);
     };
 
     return (
@@ -511,47 +559,53 @@ const ManageServicesPage = () => {
             <h1 className="text-3xl font-bold mb-6">Manage Services</h1>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <Card className="p-6">
-                    <h2 className="text-xl font-bold mb-4">Add Service Manually</h2>
-                    <form onSubmit={handleManualAdd} className="space-y-4">
-                        <input value={serviceName} onChange={e => setServiceName(e.target.value)} placeholder="Service Name (e.g., Facebook)" required className="w-full border-gray-300 rounded-md"/>
-                        <input value={serviceIcon} onChange={e => setServiceIcon(e.target.value)} placeholder="Emoji Icon (e.g., 👍)" className="w-full border-gray-300 rounded-md"/>
-                        <input type="number" step="0.01" value={servicePrice} onChange={e => setServicePrice(e.target.value)} placeholder="Price (e.g., 1.75)" required className="w-full border-gray-300 rounded-md"/>
-                        <Button type="submit" className="w-full">Add Service</Button>
-                    </form>
-                </Card>
-                <Card className="p-6">
-                    <h2 className="text-xl font-bold mb-4">Import Services from Provider</h2>
-                    <form onSubmit={handleImport} className="space-y-4">
-                        <select value={selectedProvider} onChange={e => setSelectedProvider(e.target.value)} required className="w-full border-gray-300 rounded-md">
+                    <h2 className="text-xl font-bold mb-4">Import from Provider</h2>
+                    <form onSubmit={(e) => handleImport(e, importForm.serviceName !== '')} className="space-y-4">
+                        <select value={importForm.provider} onChange={e => setImportForm({...importForm, provider: e.target.value})} required className="w-full border-gray-300 rounded-md">
                             <option value="">Select Provider</option>
                             {providers.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
                         </select>
-                        <input value={importCountry} onChange={e => setImportCountry(e.target.value)} placeholder="Country (e.g., any, usa)" required className="w-full border-gray-300 rounded-md"/>
-                        <input type="number" value={commission} onChange={e => setCommission(parseFloat(e.target.value))} placeholder="Commission %" required className="w-full border-gray-300 rounded-md"/>
-                        <Button type="submit" className="w-full" disabled={loading.import}>{loading.import ? <Spinner /> : 'Import Services'}</Button>
+                        <input value={importForm.country} onChange={e => setImportForm({...importForm, country: e.target.value})} placeholder="Country (e.g., any, usa)" required className="w-full border-gray-300 rounded-md"/>
+                        <input value={importForm.serviceName} onChange={e => setImportForm({...importForm, serviceName: e.target.value})} placeholder="Service Name (optional, for single import)" className="w-full border-gray-300 rounded-md"/>
+                        <input type="number" value={importForm.commission} onChange={e => setImportForm({...importForm, commission: parseFloat(e.target.value)})} placeholder="Profit %" required className="w-full border-gray-300 rounded-md"/>
+                        <Button type="submit" className="w-full" disabled={loading.import}>{loading.import ? <Spinner /> : 'Import'}</Button>
+                    </form>
+                </Card>
+                <Card className="p-6">
+                    <h2 className="text-xl font-bold mb-4">Add Service Manually</h2>
+                    <form onSubmit={handleManualAdd} className="space-y-4">
+                        <input value={manualForm.name} onChange={e => setManualForm({...manualForm, name: e.target.value})} placeholder="Service Name (e.g., Facebook)" required className="w-full border-gray-300 rounded-md"/>
+                        <input value={manualForm.icon} onChange={e => setManualForm({...manualForm, icon: e.target.value})} placeholder="Emoji Icon (e.g., 👍)" className="w-full border-gray-300 rounded-md"/>
+                        <input type="number" step="0.01" value={manualForm.price} onChange={e => setManualForm({...manualForm, price: e.target.value})} placeholder="Price (e.g., 1.75)" required className="w-full border-gray-300 rounded-md"/>
+                        <Button type="submit" className="w-full">Add Manually</Button>
                     </form>
                 </Card>
             </div>
             <Card className="mt-8">
-                <div className="p-4"><h2 className="text-xl font-bold">Existing Services</h2></div>
+                <div className="p-4 flex justify-between items-center">
+                    <h2 className="text-xl font-bold">Existing Services</h2>
+                    {selectedServices.length > 0 && (
+                        <Button onClick={handleBulkDelete} className="bg-red-600 hover:bg-red-700">Delete Selected ({selectedServices.length})</Button>
+                    )}
+                </div>
                 <div className="overflow-x-auto">
                     {loading.services ? <Spinner /> : (
                         <table className="min-w-full">
                             <thead className="bg-gray-50">
                                 <tr>
+                                    <th className="px-6 py-3"><input type="checkbox" onChange={handleSelectAll} /></th>
                                     <th className="px-6 py-3 text-left">Name</th>
                                     <th className="px-6 py-3 text-left">Price</th>
                                     <th className="px-6 py-3 text-left">Provider</th>
-                                    <th className="px-6 py-3 text-left">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
                                 {services.map(s => (
-                                    <tr key={s.id}>
+                                    <tr key={s.id} className={selectedServices.includes(s.id) ? 'bg-blue-50' : ''}>
+                                        <td className="px-6 py-4"><input type="checkbox" checked={selectedServices.includes(s.id)} onChange={() => handleSelect(s.id)} /></td>
                                         <td className="px-6 py-4 flex items-center">{s.icon && <span className="mr-3 text-xl">{s.icon}</span>}{s.name}</td>
                                         <td className="px-6 py-4">Rs {s.price.toFixed(2)}</td>
                                         <td className="px-6 py-4">{s.provider}</td>
-                                        <td className="px-6 py-4"><button onClick={() => handleDelete(s.id)} className="text-red-500 hover:text-red-700"><TrashIcon /></button></td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -710,7 +764,6 @@ const NumberHistoryPage = () => {
     const [itemsPerPage, setItemsPerPage] = useState(10);
 
     useEffect(() => {
-        // collectionGroup query to get all orders from all users
         const q = query(collectionGroup(db, "orders"));
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const ordersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
