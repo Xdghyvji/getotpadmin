@@ -1,5 +1,5 @@
 import React from 'react';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, createContext, useContext } from 'react';
 
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from 'firebase/app';
@@ -41,6 +41,35 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+
+// --- CURRENCY CONTEXT ---
+const CurrencyContext = createContext();
+
+const conversionRates = {
+    USD: { rate: 1, symbol: '$' },
+    PKR: { rate: 278, symbol: 'Rs' },
+    INR: { rate: 83, symbol: '₹' },
+};
+
+const CurrencyProvider = ({ children }) => {
+    const [currency, setCurrency] = useState('USD');
+
+    const convertCurrency = (amountInUsd) => {
+        if (typeof amountInUsd !== 'number') return '0.00';
+        const { rate } = conversionRates[currency];
+        return (amountInUsd * rate).toFixed(2);
+    };
+
+    const currencySymbol = conversionRates[currency].symbol;
+
+    return (
+        <CurrencyContext.Provider value={{ currency, setCurrency, convertCurrency, currencySymbol }}>
+            {children}
+        </CurrencyContext.Provider>
+    );
+};
+
+const useCurrency = () => useContext(CurrencyContext);
 
 
 // --- ICONS (using inline SVGs for simplicity) ---
@@ -157,30 +186,38 @@ const AdminLogin = ({ setAdmin }) => {
     );
 };
 
-const StatCard = ({ title, value, icon, change, changeType }) => (
-    <Card className="p-4">
-        <div className="flex items-center">
-            <div className="p-3 rounded-full bg-blue-100 text-blue-600 mr-4">
-                {icon}
+const StatCard = ({ title, value, icon, change, changeType }) => {
+    const { convertCurrency, currencySymbol } = useCurrency();
+    const displayValue = title.toLowerCase().includes('amount') || title.toLowerCase().includes('recharge') 
+        ? `${currencySymbol} ${convertCurrency(value)}` 
+        : value;
+
+    return (
+        <Card className="p-4">
+            <div className="flex items-center">
+                <div className="p-3 rounded-full bg-blue-100 text-blue-600 mr-4">
+                    {icon}
+                </div>
+                <div>
+                    <p className="text-sm font-medium text-gray-500">{title}</p>
+                    <p className="text-2xl font-bold">{displayValue}</p>
+                </div>
             </div>
-            <div>
-                <p className="text-sm font-medium text-gray-500">{title}</p>
-                <p className="text-2xl font-bold">{value}</p>
-            </div>
-        </div>
-        {change && (
-            <div className={`mt-2 text-xs flex items-center ${changeType === 'increase' ? 'text-green-600' : 'text-red-600'}`}>
-                {changeType === 'increase' ? <TrendingUpIcon className="w-4 h-4" /> : <TrendingDownIcon className="w-4 h-4" />}
-                <span className="ml-1">{change}</span>
-            </div>
-        )}
-    </Card>
-);
+            {change && (
+                <div className={`mt-2 text-xs flex items-center ${changeType === 'increase' ? 'text-green-600' : 'text-red-600'}`}>
+                    {changeType === 'increase' ? <TrendingUpIcon className="w-4 h-4" /> : <TrendingDownIcon className="w-4 h-4" />}
+                    <span className="ml-1">{change}</span>
+                </div>
+            )}
+        </Card>
+    );
+};
 
 const DashboardPage = () => {
-    const [stats, setStats] = useState({ totalUsers: 0, totalRecharge: 0 });
+    const [stats, setStats] = useState({ totalUsers: 0, totalRecharge: 0, totalOtpSellAmount: 29511 });
     const [topUsers, setTopUsers] = useState([]);
     const [loading, setLoading] = useState(true);
+    const { convertCurrency, currencySymbol } = useCurrency();
 
     useEffect(() => {
         const q = query(collection(db, "users"));
@@ -189,7 +226,7 @@ const DashboardPage = () => {
             const totalUsers = usersData.length;
             const totalRecharge = usersData.reduce((acc, user) => acc + (user.balance || 0), 0);
             const sortedUsers = [...usersData].sort((a, b) => b.balance - a.balance).slice(0, 5);
-            setStats({ totalUsers, totalRecharge });
+            setStats(prev => ({ ...prev, totalUsers, totalRecharge }));
             setTopUsers(sortedUsers);
             setLoading(false);
         });
@@ -203,9 +240,9 @@ const DashboardPage = () => {
             <h1 className="text-3xl font-bold mb-6">Dashboard</h1>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
                 <StatCard title="TOTAL USER" value={stats.totalUsers} icon={<UsersIcon />} />
-                <StatCard title="TOTAL RECHARGE" value={`Rs ${stats.totalRecharge.toLocaleString()}`} icon={<ShoppingCartIcon />} />
+                <StatCard title="TOTAL RECHARGE" value={stats.totalRecharge} icon={<ShoppingCartIcon />} />
                 <StatCard title="TOTAL OTP SELL" value="194" icon={<TrendingUpIcon />} />
-                <StatCard title="TOTAL OTP SELL AMOUNT" value="Rs 29,511" icon={<DollarSignIcon />} />
+                <StatCard title="TOTAL OTP SELL AMOUNT" value={stats.totalOtpSellAmount} icon={<DollarSignIcon />} />
             </div>
             <Card>
                 <div className="p-4"><h2 className="text-xl font-bold">Top Users by Balance</h2></div>
@@ -223,7 +260,7 @@ const DashboardPage = () => {
                                 <tr key={index}>
                                     <td className="px-6 py-4">{index + 1}</td>
                                     <td className="px-6 py-4">{user.email}</td>
-                                    <td className="px-6 py-4">Rs {user.balance.toFixed(2)}</td>
+                                    <td className="px-6 py-4">{currencySymbol} {convertCurrency(user.balance)}</td>
                                 </tr>
                             ))}
                         </tbody>
@@ -258,7 +295,7 @@ const EditUserModal = ({ user, onClose, onSave }) => {
                         <input value={user.email} disabled className="w-full mt-1 border-gray-300 rounded-md bg-gray-100" />
                     </div>
                      <div>
-                        <label className="block text-sm font-medium">Balance</label>
+                        <label className="block text-sm font-medium">Balance (in USD)</label>
                         <input type="number" step="0.01" value={balance} onChange={e => setBalance(e.target.value)} className="w-full mt-1 border-gray-300 rounded-md" />
                     </div>
                     <div>
@@ -280,42 +317,45 @@ const EditUserModal = ({ user, onClose, onSave }) => {
 };
 
 
-const UserTable = ({ users, onStatusChange, onEdit }) => (
-    <table className="min-w-full">
-        <thead className="bg-gray-50">
-            <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Balance</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Joined</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
-            </tr>
-        </thead>
-        <tbody className="bg-white divide-y divide-gray-200">
-            {users.map(user => (
-                <tr key={user.id}>
-                    <td className="px-6 py-4">{user.displayName}</td>
-                    <td className="px-6 py-4">{user.email}</td>
-                    <td className="px-6 py-4">Rs {user.balance.toFixed(2)}</td>
-                    <td className="px-6 py-4">
-                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${user.status === 'blocked' ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'}`}>
-                            {user.status || 'active'}
-                        </span>
-                    </td>
-                    <td className="px-6 py-4">{user.createdAt && new Date(user.createdAt.seconds * 1000).toLocaleDateString()}</td>
-                    <td className="px-6 py-4 space-x-4">
-                        <button onClick={() => onEdit(user)} className="text-blue-600 hover:text-blue-900"><EditIcon /></button>
-                        <button onClick={() => onStatusChange(user.id, user.status === 'blocked' ? 'active' : 'blocked')} 
-                                className={`text-sm font-medium ${user.status === 'blocked' ? 'text-green-600 hover:text-green-900' : 'text-red-600 hover:text-red-900'}`}>
-                            {user.status === 'blocked' ? 'Unblock' : 'Block'}
-                        </button>
-                    </td>
+const UserTable = ({ users, onStatusChange, onEdit }) => {
+    const { convertCurrency, currencySymbol } = useCurrency();
+    return (
+        <table className="min-w-full">
+            <thead className="bg-gray-50">
+                <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Balance</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Joined</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
                 </tr>
-            ))}
-        </tbody>
-    </table>
-);
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+                {users.map(user => (
+                    <tr key={user.id}>
+                        <td className="px-6 py-4">{user.displayName}</td>
+                        <td className="px-6 py-4">{user.email}</td>
+                        <td className="px-6 py-4">{currencySymbol} {convertCurrency(user.balance)}</td>
+                        <td className="px-6 py-4">
+                            <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${user.status === 'blocked' ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'}`}>
+                                {user.status || 'active'}
+                            </span>
+                        </td>
+                        <td className="px-6 py-4">{user.createdAt && new Date(user.createdAt.seconds * 1000).toLocaleDateString()}</td>
+                        <td className="px-6 py-4 space-x-4">
+                            <button onClick={() => onEdit(user)} className="text-blue-600 hover:text-blue-900"><EditIcon /></button>
+                            <button onClick={() => onStatusChange(user.id, user.status === 'blocked' ? 'active' : 'blocked')} 
+                                    className={`text-sm font-medium ${user.status === 'blocked' ? 'text-green-600 hover:text-green-900' : 'text-red-600 hover:text-red-900'}`}>
+                                {user.status === 'blocked' ? 'Unblock' : 'Block'}
+                            </button>
+                        </td>
+                    </tr>
+                ))}
+            </tbody>
+        </table>
+    );
+};
 
 const ManageUsersPage = ({ filter }) => {
     const [users, setUsers] = useState([]);
@@ -379,8 +419,8 @@ const ManageUsersPage = ({ filter }) => {
     );
 };
 
-const FindUserPage = () => {
-    const [searchTerm, setSearchTerm] = useState('');
+const FindUserPage = ({ initialSearchTerm, setPage }) => {
+    const [searchTerm, setSearchTerm] = useState(initialSearchTerm || '');
     const [allUsers, setAllUsers] = useState([]);
     const [filteredUsers, setFilteredUsers] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -393,7 +433,6 @@ const FindUserPage = () => {
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const usersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             setAllUsers(usersData);
-            setFilteredUsers(usersData);
             setLoading(false);
         });
         return () => unsubscribe();
@@ -444,8 +483,10 @@ const ManageServicesPage = () => {
     const [providers, setProviders] = useState([]);
     const [loading, setLoading] = useState({ services: true, providers: true, import: false });
     const [selectedServices, setSelectedServices] = useState([]);
+    const [editingService, setEditingService] = useState(null);
+    const [searchTerm, setSearchTerm] = useState('');
+    const { convertCurrency, currencySymbol } = useCurrency();
     
-    // Form States
     const [manualForm, setManualForm] = useState({ name: '', icon: '', price: '' });
     const [importForm, setImportForm] = useState({ provider: '', country: 'any', commission: 20, serviceName: '' });
 
@@ -503,7 +544,6 @@ const ManageServicesPage = () => {
             };
 
             if (isSingle) {
-                // Response for single product is nested
                 const productData = result[serviceName];
                 if (productData) {
                     const countryData = productData[country];
@@ -554,6 +594,8 @@ const ManageServicesPage = () => {
         setSelectedServices([]);
     };
 
+    const filteredServices = services.filter(s => s.name.toLowerCase().includes(searchTerm.toLowerCase()));
+
     return (
         <div>
             <h1 className="text-3xl font-bold mb-6">Manage Services</h1>
@@ -576,7 +618,7 @@ const ManageServicesPage = () => {
                     <form onSubmit={handleManualAdd} className="space-y-4">
                         <input value={manualForm.name} onChange={e => setManualForm({...manualForm, name: e.target.value})} placeholder="Service Name (e.g., Facebook)" required className="w-full border-gray-300 rounded-md"/>
                         <input value={manualForm.icon} onChange={e => setManualForm({...manualForm, icon: e.target.value})} placeholder="Emoji Icon (e.g., 👍)" className="w-full border-gray-300 rounded-md"/>
-                        <input type="number" step="0.01" value={manualForm.price} onChange={e => setManualForm({...manualForm, price: e.target.value})} placeholder="Price (e.g., 1.75)" required className="w-full border-gray-300 rounded-md"/>
+                        <input type="number" step="0.01" value={manualForm.price} onChange={e => setManualForm({...manualForm, price: e.target.value})} placeholder="Price (in USD)" required className="w-full border-gray-300 rounded-md"/>
                         <Button type="submit" className="w-full">Add Manually</Button>
                     </form>
                 </Card>
@@ -584,6 +626,10 @@ const ManageServicesPage = () => {
             <Card className="mt-8">
                 <div className="p-4 flex justify-between items-center">
                     <h2 className="text-xl font-bold">Existing Services</h2>
+                    <div className="w-1/3 relative">
+                        <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search services..." className="w-full border-gray-300 rounded-md shadow-sm pl-10" />
+                        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    </div>
                     {selectedServices.length > 0 && (
                         <Button onClick={handleBulkDelete} className="bg-red-600 hover:bg-red-700">Delete Selected ({selectedServices.length})</Button>
                     )}
@@ -600,11 +646,11 @@ const ManageServicesPage = () => {
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
-                                {services.map(s => (
+                                {filteredServices.map(s => (
                                     <tr key={s.id} className={selectedServices.includes(s.id) ? 'bg-blue-50' : ''}>
                                         <td className="px-6 py-4"><input type="checkbox" checked={selectedServices.includes(s.id)} onChange={() => handleSelect(s.id)} /></td>
                                         <td className="px-6 py-4 flex items-center">{s.icon && <span className="mr-3 text-xl">{s.icon}</span>}{s.name}</td>
-                                        <td className="px-6 py-4">Rs {s.price.toFixed(2)}</td>
+                                        <td className="px-6 py-4">{currencySymbol} {convertCurrency(s.price)}</td>
                                         <td className="px-6 py-4">{s.provider}</td>
                                     </tr>
                                 ))}
@@ -762,6 +808,7 @@ const NumberHistoryPage = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage, setItemsPerPage] = useState(10);
+    const { convertCurrency, currencySymbol } = useCurrency();
 
     useEffect(() => {
         const q = query(collectionGroup(db, "orders"));
@@ -817,7 +864,7 @@ const NumberHistoryPage = () => {
                                     <tr key={order.id}>
                                         <td className="px-6 py-4">{order.product}</td>
                                         <td className="px-6 py-4">{order.phone}</td>
-                                        <td className="px-6 py-4">Rs {order.price.toFixed(2)}</td>
+                                        <td className="px-6 py-4">{currencySymbol} {convertCurrency(order.price)}</td>
                                         <td className="px-6 py-4">{order.createdAt && new Date(order.createdAt.seconds * 1000).toLocaleString()}</td>
                                         <td className="px-6 py-4 text-xs">{order.userId}</td>
                                     </tr>
@@ -879,10 +926,17 @@ const Sidebar = ({ page, setPage, isSidebarOpen, setSidebarOpen }) => (
 const AdminPanel = ({ admin, setAdmin }) => {
     const [page, setPage] = useState('dashboard');
     const [isSidebarOpen, setSidebarOpen] = useState(false);
+    const [globalSearchTerm, setGlobalSearchTerm] = useState('');
+    const { setCurrency } = useCurrency();
 
     const handleLogout = async () => {
         await signOut(auth);
         setAdmin(null);
+    };
+    
+    const handleGlobalSearch = (e) => {
+        e.preventDefault();
+        setPage('find_user');
     };
 
     const renderPage = () => {
@@ -890,7 +944,7 @@ const AdminPanel = ({ admin, setAdmin }) => {
             case 'dashboard': return <DashboardPage />;
             case 'all_user': return <ManageUsersPage filter={null} />;
             case 'blocked_user': return <ManageUsersPage filter="blocked" />;
-            case 'find_user': return <FindUserPage />;
+            case 'find_user': return <FindUserPage initialSearchTerm={globalSearchTerm} setPage={setPage} />;
             case 'add_service': return <ManageServicesPage />;
             case 'number_history': return <NumberHistoryPage />;
             case 'show_apis':
@@ -917,8 +971,16 @@ const AdminPanel = ({ admin, setAdmin }) => {
             <div className="flex-1 flex flex-col">
                 <header className="bg-white shadow-sm h-16 flex items-center justify-between px-6">
                     <button className="md:hidden" onClick={() => setSidebarOpen(true)}><MenuIcon /></button>
-                    <div className="flex-1"></div>
+                    <form onSubmit={handleGlobalSearch} className="relative w-1/3">
+                         <input value={globalSearchTerm} onChange={e => setGlobalSearchTerm(e.target.value)} placeholder="Search user by email..." className="w-full border-gray-300 rounded-md pl-10" />
+                         <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    </form>
                     <div className="flex items-center space-x-4">
+                        <select onChange={(e) => setCurrency(e.target.value)} className="border-gray-300 rounded-md">
+                            <option value="USD">USD</option>
+                            <option value="PKR">PKR</option>
+                            <option value="INR">INR</option>
+                        </select>
                         <p>{admin?.email}</p>
                         <button onClick={handleLogout} className="text-red-500 hover:text-red-700 font-semibold">Logout</button>
                     </div>
@@ -961,7 +1023,11 @@ function App() {
         return <div className="min-h-screen flex items-center justify-center bg-gray-100"><Spinner /></div>;
     }
     
-    return admin ? <AdminPanel admin={admin} setAdmin={setAdmin} /> : <AdminLogin setAdmin={setAdmin} />;
+    return (
+        <CurrencyProvider>
+            {admin ? <AdminPanel admin={admin} setAdmin={setAdmin} /> : <AdminLogin setAdmin={setAdmin} />}
+        </CurrencyProvider>
+    );
 }
 
 export default App;
