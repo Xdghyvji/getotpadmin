@@ -763,12 +763,12 @@ const ManageServersPage = () => {
 
     return (
         <div>
-            <h1 className="text-3xl font-bold mb-6">Manage Servers</h1>
+            <h1 className="text-3xl font-bold mb-6">Manage Servers (Countries)</h1>
             <Card className="p-6 mb-8">
-                <h2 className="text-xl font-bold mb-4">Add New Server</h2>
+                <h2 className="text-xl font-bold mb-4">Add New Server/Country</h2>
                 <form onSubmit={handleAddServer} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-                    <input value={serverName} onChange={e => setServerName(e.target.value)} placeholder="Server Name" className="md:col-span-1 border-gray-300 rounded-md" />
-                    <input value={serverLocation} onChange={e => setServerLocation(e.target.value)} placeholder="Location (e.g., USA)" className="md:col-span-1 border-gray-300 rounded-md" />
+                    <input value={serverName} onChange={e => setServerName(e.target.value)} placeholder="Country Name (e.g., england)" className="md:col-span-1 border-gray-300 rounded-md" />
+                    <input value={serverLocation} onChange={e => setServerLocation(e.target.value)} placeholder="Display Location (e.g., UK)" className="md:col-span-1 border-gray-300 rounded-md" />
                     <Button type="submit" className="md:col-span-1 w-full">Add Server</Button>
                 </form>
             </Card>
@@ -778,8 +778,8 @@ const ManageServersPage = () => {
                         <table className="min-w-full">
                             <thead className="bg-gray-50">
                                 <tr>
-                                    <th className="px-6 py-3 text-left">Name</th>
-                                    <th className="px-6 py-3 text-left">Location</th>
+                                    <th className="px-6 py-3 text-left">Name (for API)</th>
+                                    <th className="px-6 py-3 text-left">Location (for Display)</th>
                                     <th className="px-6 py-3 text-left">Status</th>
                                     <th className="px-6 py-3 text-left">Actions</th>
                                 </tr>
@@ -890,20 +890,13 @@ const ContentPage = ({ title }) => (
 
 const sidebarItems = [
     { name: 'Dashboard', icon: <DashboardIcon />, page: 'dashboard' },
-    { name: 'All User', icon: <UsersIcon />, page: 'all_user' },
-    { name: 'Blocked User', icon: <BlockIcon />, page: 'blocked_user' },
+    { name: 'All Users', icon: <UsersIcon />, page: 'all_user' },
+    { name: 'Blocked Users', icon: <BlockIcon />, page: 'blocked_user' },
     { name: 'Find User', icon: <SearchIcon />, page: 'find_user' },
-    { name: 'Add Service', icon: <PlusCircleIcon />, page: 'add_service' },
-    { name: 'Transaction History', icon: <ListIcon />, page: 'transaction_history' },
+    { name: 'Manage Services', icon: <PlusCircleIcon />, page: 'manage_services' },
+    { name: 'Manage Servers', icon: <ServerIcon />, page: 'manage_servers' },
+    { name: 'Manage APIs', icon: <CodeIcon />, page: 'manage_apis' },
     { name: 'Number History', icon: <ListIcon />, page: 'number_history' },
-    { name: 'Show Server', icon: <ServerIcon />, page: 'show_server' },
-    { name: 'Add Server', icon: <PlusCircleIcon />, page: 'add_server' },
-    { name: 'Show APIs', icon: <CodeIcon />, page: 'show_apis' },
-    { name: 'Add APIs', icon: <PlusCircleIcon />, page: 'add_apis' },
-    { name: 'Refer Transaction', icon: <DollarSignIcon />, page: 'refer_transaction' },
-    { name: 'Number Waiting', icon: <ClockIcon />, page: 'number_waiting' },
-    { name: 'Promocode Settings', icon: <SettingsIcon />, page: 'promocode_settings' },
-    { name: 'Today Number History', icon: <ListIcon />, page: 'today_number_history' },
 ];
 
 const Sidebar = ({ page, setPage, isSidebarOpen, setSidebarOpen }) => (
@@ -945,14 +938,10 @@ const AdminPanel = ({ admin, setAdmin }) => {
             case 'all_user': return <ManageUsersPage filter={null} />;
             case 'blocked_user': return <ManageUsersPage filter="blocked" />;
             case 'find_user': return <FindUserPage initialSearchTerm={globalSearchTerm} setPage={setPage} />;
-            case 'add_service': return <ManageServicesPage />;
+            case 'manage_services': return <ManageServicesPage />;
             case 'number_history': return <NumberHistoryPage />;
-            case 'show_apis':
-            case 'add_apis':
-                return <ManageApisPage />;
-            case 'show_server':
-            case 'add_server':
-                return <ManageServersPage />;
+            case 'manage_apis': return <ManageApisPage />;
+            case 'manage_servers': return <ManageServersPage />;
             default: return <ContentPage title={sidebarItems.find(item => item.page === page)?.name || 'Page'} />;
         }
     };
