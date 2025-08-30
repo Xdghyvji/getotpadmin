@@ -7,11 +7,6 @@
 [functions]
   directory = "netlify/functions"
 
-# NEW: Scheduled function for updating order statuses
-# This tells Netlify to run the 'update-order-status' function every minute.
-[functions."update-order-status"]
-  schedule = "* * * * *"
-
 # Redirect rule for API functions from your original file
 [[redirects]]
   from = "/api/*"
