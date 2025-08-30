@@ -30,6 +30,9 @@ exports.handler = async function(event) {
   }
 
   try {
+    const { profitPercentage } = JSON.parse(event.body);
+    const profitMargin = (profitPercentage / 100) || 0.20; // Default to 20% if not provided
+
     // 1. Get the provider API key and base URL from Firestore
     const providerRef = db.collection('api_providers').where('name', '==', '5sim');
     const providerSnapshot = await providerRef.get();
@@ -38,14 +41,23 @@ exports.handler = async function(event) {
     }
     const { apiKey, baseUrl } = providerSnapshot.docs[0].data();
 
-    // 2. Fetch all prices (and implicitly, services and countries)
+    // 2. Fetch all services, countries, and prices in a single call.
+    // This is the most efficient way to get all the data required.
     const pricesUrl = `${baseUrl}/guest/prices`;
-    const pricesResponse = await fetch(pricesUrl, { headers: { 'Accept': 'application/json' } });
-    if (!pricesResponse.ok) {
-      throw new Error(`Failed to fetch prices from 5sim.net: ${pricesResponse.statusText}`);
-    }
-    const pricesData = await pricesResponse.json();
+    const countriesUrl = `${baseUrl}/guest/countries`;
 
+    const [pricesResponse, countriesResponse] = await Promise.all([
+        fetch(pricesUrl, { headers: { 'Accept': 'application/json' } }),
+        fetch(countriesUrl, { headers: { 'Accept': 'application/json' } })
+    ]);
+
+    if (!pricesResponse.ok || !countriesResponse.ok) {
+        throw new Error(`Failed to fetch data from 5sim.net. Prices: ${pricesResponse.statusText}, Countries: ${countriesResponse.statusText}`);
+    }
+
+    const pricesData = await pricesResponse.json();
+    const countriesData = await countriesResponse.json();
+    
     const batch = db.batch();
     const servicesRef = db.collection('services');
     const serversRef = db.collection('servers');
@@ -66,14 +78,32 @@ exports.handler = async function(event) {
     let serviceCount = 0;
     let serverCount = 0;
     
-    // 3. Process data and prepare batch writes
+    // 3. Process countries data to get ISO codes
+    const countryMap = {};
+    for (const countryName in countriesData) {
+        const countryInfo = countriesData[countryName];
+        if (countryInfo.iso && Object.keys(countryInfo.iso).length > 0) {
+            const iso = Object.keys(countryInfo.iso)[0];
+            countryMap[countryName] = { 
+              location: countryInfo.text_en, 
+              iso: iso 
+            };
+        }
+    }
+
+    // 4. Process prices data and prepare batch writes
     for (const countryName in pricesData) {
+      const countryInfo = countryMap[countryName];
+      const location = countryInfo?.location || countryName.toUpperCase();
+      const iso = countryInfo?.iso || '';
+
       if (!existingServers[countryName]) {
         // Add new country (server)
         const newServerRef = serversRef.doc();
         batch.set(newServerRef, {
           name: countryName,
-          location: countryName.toUpperCase(), // Simple placeholder, could be improved
+          location,
+          iso,
           status: 'active'
         });
         existingServers[countryName] = newServerRef.id;
@@ -81,22 +111,34 @@ exports.handler = async function(event) {
       }
 
       for (const serviceName in pricesData[countryName]) {
-        if (!existingServices[serviceName]) {
-          // Add new service
-          const newServiceRef = servicesRef.doc();
-          batch.set(newServiceRef, {
-            name: serviceName.charAt(0).toUpperCase() + serviceName.slice(1),
-            price: 0, // Price is dynamic, we just need the service list
-            provider: '5sim',
-            status: 'active'
-          });
-          existingServices[serviceName] = newServiceRef.id;
-          serviceCount++;
+        const operators = pricesData[countryName][serviceName];
+        
+        // Find the lowest price across all operators for this service/country pair
+        let minPrice = Infinity;
+        for (const operator in operators) {
+            if (operators[operator].cost !== undefined) {
+                minPrice = Math.min(minPrice, operators[operator].cost);
+            }
+        }
+        
+        // If a valid price was found, and the service doesn't exist, create it
+        if (minPrice !== Infinity && !existingServices[serviceName]) {
+            const finalPrice = minPrice * (1 + profitMargin);
+            const newServiceRef = servicesRef.doc();
+            batch.set(newServiceRef, {
+              name: serviceName.charAt(0).toUpperCase() + serviceName.slice(1),
+              price: parseFloat(finalPrice.toFixed(2)),
+              originalPrice: minPrice,
+              provider: '5sim',
+              status: 'active'
+            });
+            existingServices[serviceName] = newServiceRef.id;
+            serviceCount++;
         }
       }
     }
 
-    // 4. Commit the batch
+    // 5. Commit the batch
     await batch.commit();
 
     console.log(`Successfully synced ${serviceCount} new services and ${serverCount} new servers.`);
