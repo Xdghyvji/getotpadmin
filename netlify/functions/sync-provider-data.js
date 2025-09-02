@@ -1,117 +1,163 @@
 // Netlify Function: functions/sync-provider-data.js
 // Description: Fetches services and countries from the 5sim.net API and saves them to Firestore.
 
-const fetch = require('node-fetch');
-const admin = require('firebase-admin');
-const { getDocs, collection } = require('firebase-admin/firestore');
+import admin from 'firebase-admin';
 
 // --- Initialize Firebase Admin SDK ---
+// IMPORTANT: Ensure your Netlify environment variables for Firebase Admin SDK
+// are correctly set. This function needs full read/write access to Firestore.
 try {
-  if (!admin.apps.length) {
-    const serviceAccount = JSON.parse(Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64, 'base64').toString('utf8'));
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
-    });
-  }
+  if (!admin.apps.length) {
+    const { FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY } = process.env;
+    if (!FIREBASE_PROJECT_ID || !FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY) {
+      throw new Error("Missing Firebase Admin environment variables.");
+    }
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId: FIREBASE_PROJECT_ID,
+        clientEmail: FIREBASE_CLIENT_EMAIL,
+        privateKey: FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+      })
+    });
+  }
 } catch (e) {
-  console.error('Firebase Admin initialization error:', e);
+  console.error('Firebase Admin initialization error:', e);
+  // Re-throw to fail the function early if initialization fails
+  throw e;
 }
 
 const db = admin.firestore();
 
 exports.handler = async function(event) {
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
-  }
+  if (event.httpMethod !== 'POST') {
+    return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
+  }
 
-  if (!admin.apps.length) {
-    return { statusCode: 500, body: JSON.stringify({ error: 'Server configuration error: Firebase Admin not initialized.' }) };
-  }
+  try {
+    const { profitPercentage } = JSON.parse(event.body);
+    const profitMargin = (profitPercentage / 100) || 0.20; // Default to 20% if not provided
 
-  try {
-    const { profitPercentage } = JSON.parse(event.body);
-    const profitMargin = (profitPercentage / 100) || 0.20; // Default to 20% if not provided
+    // 1. Get the provider API key and base URL from Firestore
+    const providerRef = db.collection('api_providers').where('name', '==', '5sim');
+    const providerSnapshot = await providerRef.get();
+    if (providerSnapshot.empty) {
+      return { statusCode: 404, body: JSON.stringify({ error: '5sim provider not found in Firestore.' }) };
+    }
+    const { baseUrl } = providerSnapshot.docs[0].data();
 
-    // 1. Get the provider API key and base URL from Firestore
-    const providerSnapshot = await db.collection('api_providers').where('name', '==', '5sim').limit(1).get();
-    if (providerSnapshot.empty) {
-      return { statusCode: 404, body: JSON.stringify({ error: '5sim provider not found in Firestore.' }) };
-    }
-    const { apiKey, baseUrl } = providerSnapshot.docs[0].data();
+    // 2. Fetch all services, countries, and prices in a single call.
+    const pricesUrl = `${baseUrl}/guest/prices`;
+    const countriesUrl = `${baseUrl}/guest/countries`;
 
-    // 2. Fetch all services and countries from the API
-    const servicesUrl = `${baseUrl}/guest/products`;
-    const countriesUrl = `${baseUrl}/guest/countries`;
+    const [pricesResponse, countriesResponse] = await Promise.all([
+        fetch(pricesUrl, { headers: { 'Accept': 'application/json' } }),
+        fetch(countriesUrl, { headers: { 'Accept': 'application/json' } })
+    ]);
 
-    const [servicesResponse, countriesResponse] = await Promise.all([
-      fetch(servicesUrl, { headers: { 'Accept': 'application/json' } }),
-      fetch(countriesUrl, { headers: { 'Accept': 'application/json' } })
-    ]);
+    if (!pricesResponse.ok || !countriesResponse.ok) {
+        const pricesError = !pricesResponse.ok ? `Prices: ${pricesResponse.statusText}` : '';
+        const countriesError = !countriesResponse.ok ? `Countries: ${countriesResponse.statusText}` : '';
+        throw new Error(`Failed to fetch data from 5sim.net. ${pricesError} ${countriesError}`.trim());
+    }
 
-    if (!servicesResponse.ok || !countriesResponse.ok) {
-      throw new Error(`Failed to fetch data from 5sim.net. Services: ${servicesResponse.statusText}, Countries: ${countriesResponse.statusText}`);
-    }
+    const pricesData = await pricesResponse.json();
+    const countriesData = await countriesResponse.json();
+    
+    // Create a new batch write for efficient operations
+    const batch = db.batch();
+    const servicesRef = db.collection('services');
+    const serversRef = db.collection('servers');
+    
+    // Pre-fetch all existing services and servers to check for duplicates
+    const existingServices = {};
+    const servicesSnapshot = await servicesRef.get();
+    servicesSnapshot.docs.forEach(doc => {
+      existingServices[doc.data().name.toLowerCase()] = doc.id;
+    });
 
-    const servicesData = await servicesResponse.json();
-    const countriesData = await countriesResponse.json();
-    
-    // Prepare batch writes and a map for faster lookups
-    const batch = db.batch();
-    const servicesRef = db.collection('services');
-    const serversRef = db.collection('servers');
-    
-    // --- Clear existing collections to avoid duplicates ---
-    const existingServicesSnapshot = await servicesRef.get();
-    existingServicesSnapshot.docs.forEach(doc => batch.delete(doc.ref));
+    const existingServers = {};
+    const serversSnapshot = await serversRef.get();
+    serversSnapshot.docs.forEach(doc => {
+      existingServers[doc.data().name.toLowerCase()] = doc.id;
+    });
 
-    const existingServersSnapshot = await serversRef.get();
-    existingServersSnapshot.docs.forEach(doc => batch.delete(doc.ref));
+    let serviceCount = 0;
+    let serverCount = 0;
+    
+    // 3. Process countries data to get ISO codes and locations
+    const countryMap = {};
+    for (const countryName in countriesData) {
+        const countryInfo = countriesData[countryName];
+        if (countryInfo.iso && Object.keys(countryInfo.iso).length > 0) {
+            const iso = Object.keys(countryInfo.iso)[0];
+            countryMap[countryName.toLowerCase()] = { 
+                location: countryInfo.text_en, 
+                iso: iso 
+            };
+        }
+    }
 
-    // --- Process and write countries (servers) ---
-    const countryMap = {};
-    for (const name in countriesData) {
-      const { iso, text_en } = countriesData[name];
-      const isoCode = iso ? Object.keys(iso)[0] : '';
-      const location = text_en || name;
-      const newServerRef = serversRef.doc();
-      batch.set(newServerRef, { name, location, iso: isoCode, status: 'active' });
-      countryMap[name] = { id: newServerRef.id, location, iso: isoCode };
-    }
+    // 4. Process prices data and prepare batch writes
+    for (const countryName in pricesData) {
+      const normalizedCountryName = countryName.toLowerCase();
+      const countryInfo = countryMap[normalizedCountryName];
+      const location = countryInfo?.location || countryName.toUpperCase();
+      const iso = countryInfo?.iso || '';
 
-    // --- Process and write services ---
-    for (const countryName in servicesData) {
-      const servicesByCountry = servicesData[countryName];
-      for (const serviceName in servicesByCountry) {
-        const serviceInfo = servicesByCountry[serviceName];
-        const price = serviceInfo.Price;
-        const finalPrice = price * (1 + profitMargin);
-        
-        const newServiceRef = servicesRef.doc(serviceName); // Use serviceName as doc ID for uniqueness
-        batch.set(newServiceRef, {
-          name: serviceName,
-          price: parseFloat(finalPrice.toFixed(2)),
-          originalPrice: price,
-          provider: '5sim',
-          status: 'active'
-        }, { merge: true }); // Use merge to avoid overwriting existing manual entries
-      }
-    }
+      if (!existingServers[normalizedCountryName]) {
+        const newServerRef = serversRef.doc();
+        batch.set(newServerRef, {
+          name: normalizedCountryName,
+          location,
+          iso,
+          status: 'active'
+        });
+        existingServers[normalizedCountryName] = newServerRef.id;
+        serverCount++;
+      }
 
-    // 5. Commit the batch
-    await batch.commit();
+      for (const serviceName in pricesData[countryName]) {
+        const normalizedServiceName = serviceName.toLowerCase();
+        const operators = pricesData[countryName][serviceName];
+        
+        let minPrice = Infinity;
+        for (const operator in operators) {
+            if (operators[operator].cost !== undefined) {
+                minPrice = Math.min(minPrice, operators[operator].cost);
+            }
+        }
+        
+        if (minPrice !== Infinity && !existingServices[normalizedServiceName]) {
+            const finalPrice = minPrice * (1 + profitMargin);
+            const newServiceRef = servicesRef.doc();
+            batch.set(newServiceRef, {
+              name: serviceName,
+              price: parseFloat(finalPrice.toFixed(2)),
+              originalPrice: minPrice,
+              provider: '5sim',
+              status: 'active'
+            });
+            existingServices[normalizedServiceName] = newServiceRef.id;
+            serviceCount++;
+        }
+      }
+    }
 
-    console.log(`Successfully synced data from 5sim.net.`);
+    // 5. Commit the batch
+    await batch.commit();
 
-    return {
-      statusCode: 200,
-      body: JSON.stringify({ message: `Successfully synced data from 5sim.net.` }),
-    };
+    console.log(`Successfully synced ${serviceCount} new services and ${serverCount} new servers.`);
 
-  } catch (error) {
-    console.error('Sync function error:', error);
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: `An internal server error occurred: ${error.message}` }),
-    };
-  }
+    return {
+      statusCode: 200,
+      body: JSON.stringify({ message: `Successfully synced ${serviceCount} new services and ${serverCount} new servers.` }),
+    };
+
+  } catch (error) {
+    console.error('Sync function error:', error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: `An internal server error occurred: ${error.message}` }),
+    };
+  }
 };
