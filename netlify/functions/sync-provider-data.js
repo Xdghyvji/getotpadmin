@@ -4,7 +4,6 @@
 import admin from 'firebase-admin';
 
 // --- Initialize Firebase Admin SDK ---
-// IMPORTANT: Use the single Base64-encoded environment variable.
 let db;
 
 async function initializeFirebase() {
@@ -47,7 +46,7 @@ exports.handler = async function(event) {
     }
     const { baseUrl } = providerSnapshot.docs[0].data();
 
-    // 2. Fetch all services, countries, and prices in a single call.
+    // 2. Fetch all services and countries data
     const pricesUrl = `${baseUrl}/guest/prices`;
     const countriesUrl = `${baseUrl}/guest/countries`;
 
@@ -65,12 +64,10 @@ exports.handler = async function(event) {
     const pricesData = await pricesResponse.json();
     const countriesData = await countriesResponse.json();
     
-    // Create a new batch write for efficient operations
     const batch = db.batch();
     const servicesRef = db.collection('services');
     const serversRef = db.collection('servers');
     
-    // Pre-fetch all existing services and servers to check for duplicates
     const existingServices = {};
     const servicesSnapshot = await servicesRef.get();
     servicesSnapshot.docs.forEach(doc => {
@@ -80,13 +77,12 @@ exports.handler = async function(event) {
     const existingServers = {};
     const serversSnapshot = await serversRef.get();
     serversSnapshot.docs.forEach(doc => {
-      existingServers[doc.data().name.toLowerCase()] = doc.id;
+      existingServers[doc.data().name.toLowerCase()] = { id: doc.id, data: doc.data() };
     });
 
     let serviceCount = 0;
     let serverCount = 0;
     
-    // 3. Process countries data to get ISO codes and locations
     const countryMap = {};
     for (const countryName in countriesData) {
         const countryInfo = countriesData[countryName];
@@ -99,7 +95,6 @@ exports.handler = async function(event) {
         }
     }
 
-    // 4. Process prices data and prepare batch writes
     for (const countryName in pricesData) {
       const normalizedCountryName = countryName.toLowerCase();
       const countryInfo = countryMap[normalizedCountryName];
@@ -108,13 +103,7 @@ exports.handler = async function(event) {
 
       if (!existingServers[normalizedCountryName]) {
         const newServerRef = serversRef.doc();
-        batch.set(newServerRef, {
-          name: normalizedCountryName,
-          location,
-          iso,
-          status: 'active'
-        });
-        existingServers[normalizedCountryName] = newServerRef.id;
+        batch.set(newServerRef, { name: normalizedCountryName, location, iso, status: 'active' });
         serverCount++;
       }
 
@@ -139,13 +128,11 @@ exports.handler = async function(event) {
               provider: '5sim',
               status: 'active'
             });
-            existingServices[normalizedServiceName] = newServiceRef.id;
             serviceCount++;
         }
       }
     }
 
-    // 5. Commit the batch
     await batch.commit();
 
     console.log(`Successfully synced ${serviceCount} new services and ${serverCount} new servers.`);
