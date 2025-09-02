@@ -4,31 +4,33 @@
 import admin from 'firebase-admin';
 
 // --- Initialize Firebase Admin SDK ---
-// IMPORTANT: Ensure your Netlify environment variables for Firebase Admin SDK
-// are correctly set. This function needs full read/write access to Firestore.
-try {
-  if (!admin.apps.length) {
-    const { FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY } = process.env;
-    if (!FIREBASE_PROJECT_ID || !FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY) {
-      throw new Error("Missing Firebase Admin environment variables.");
+// IMPORTANT: Use the single Base64-encoded environment variable.
+let db;
+
+async function initializeFirebase() {
+  if (db) return; // Already initialized
+  try {
+    const { FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 } = process.env;
+    if (!FIREBASE_SERVICE_ACCOUNT_KEY_BASE64) {
+      throw new Error("Missing FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 environment variable.");
     }
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId: FIREBASE_PROJECT_ID,
-        clientEmail: FIREBASE_CLIENT_EMAIL,
-        privateKey: FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
-      })
-    });
+    
+    if (!admin.apps.length) {
+      const serviceAccount = JSON.parse(Buffer.from(FIREBASE_SERVICE_ACCOUNT_KEY_BASE64, 'base64').toString('utf8'));
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount)
+      });
+    }
+    db = admin.firestore();
+  } catch (e) {
+    console.error('Firebase Admin initialization error:', e);
+    throw e;
   }
-} catch (e) {
-  console.error('Firebase Admin initialization error:', e);
-  // Re-throw to fail the function early if initialization fails
-  throw e;
 }
 
-const db = admin.firestore();
-
 exports.handler = async function(event) {
+  await initializeFirebase();
+  
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
   }
