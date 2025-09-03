@@ -46,21 +46,14 @@ exports.handler = async function(event) {
     const { baseUrl } = providerSnapshot.docs[0].data();
 
     const pricesUrl = `${baseUrl}/guest/prices`;
-    const countriesUrl = `${baseUrl}/guest/countries`;
 
-    const [pricesResponse, countriesResponse] = await Promise.all([
-        fetch(pricesUrl, { headers: { 'Accept': 'application/json' } }),
-        fetch(countriesUrl, { headers: { 'Accept': 'application/json' } })
-    ]);
+    const pricesResponse = await fetch(pricesUrl, { headers: { 'Accept': 'application/json' } });
 
-    if (!pricesResponse.ok || !countriesResponse.ok) {
-        const pricesError = !pricesResponse.ok ? `Prices: ${pricesResponse.statusText}` : '';
-        const countriesError = !countriesResponse.ok ? `Countries: ${countriesResponse.statusText}` : '';
-        throw new Error(`Failed to fetch data from 5sim.net. ${pricesError} ${countriesError}`.trim());
+    if (!pricesResponse.ok) {
+        throw new Error(`Failed to fetch data from 5sim.net. Status: ${pricesResponse.statusText}`);
     }
 
     const pricesData = await pricesResponse.json();
-    const countriesData = await countriesResponse.json();
     
     const batch = db.batch();
     const servicesRef = db.collection('services');
@@ -81,23 +74,12 @@ exports.handler = async function(event) {
     let serviceCount = 0;
     let serverCount = 0;
     
-    const countryMap = {};
-    for (const countryName in countriesData) {
-        const countryInfo = countriesData[countryName];
-        if (countryInfo.iso && Object.keys(countryInfo.iso).length > 0) {
-            const iso = Object.keys(countryInfo.iso)[0];
-            countryMap[countryName.toLowerCase()] = { 
-                location: countryInfo.text_en, 
-                iso: iso 
-            };
-        }
-    }
-
+    // Process prices data and prepare batch writes
     for (const countryName in pricesData) {
       const normalizedCountryName = countryName.toLowerCase();
-      const countryInfo = countryMap[normalizedCountryName];
-      const location = countryInfo?.location || countryName.toUpperCase();
-      const iso = countryInfo?.iso || '';
+      // Assume countryName is sufficient for now, no separate countries API needed with this approach.
+      const location = countryName.toUpperCase();
+      const iso = normalizedCountryName.substring(0, 2); // Simple ISO approximation from country name
 
       if (!existingServers[normalizedCountryName]) {
         const newServerRef = serversRef.doc();
