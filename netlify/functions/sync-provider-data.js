@@ -3,21 +3,22 @@
 
 import admin from 'firebase-admin';
 
-// --- Initialize Firebase Admin SDK ---
 let db;
 
 async function initializeFirebase() {
   if (db) return; // Already initialized
   try {
-    const { FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 } = process.env;
-    if (!FIREBASE_SERVICE_ACCOUNT_KEY_BASE64) {
-      throw new Error("Missing FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 environment variable.");
-    }
-    
     if (!admin.apps.length) {
-      const serviceAccount = JSON.parse(Buffer.from(FIREBASE_SERVICE_ACCOUNT_KEY_BASE64, 'base64').toString('utf8'));
+      const { FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY } = process.env;
+      if (!FIREBASE_PROJECT_ID || !FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY) {
+        throw new Error("Missing Firebase Admin environment variables.");
+      }
       admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
+        credential: admin.credential.cert({
+          projectId: FIREBASE_PROJECT_ID,
+          clientEmail: FIREBASE_CLIENT_EMAIL,
+          privateKey: FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+        }),
       });
     }
     db = admin.firestore();
@@ -36,9 +37,8 @@ exports.handler = async function(event) {
 
   try {
     const { profitPercentage } = JSON.parse(event.body);
-    const profitMargin = (profitPercentage / 100) || 0.20; // Default to 20% if not provided
+    const profitMargin = (profitPercentage / 100) || 0.20;
 
-    // 1. Get the provider API key and base URL from Firestore
     const providerRef = db.collection('api_providers').where('name', '==', '5sim');
     const providerSnapshot = await providerRef.get();
     if (providerSnapshot.empty) {
@@ -46,7 +46,6 @@ exports.handler = async function(event) {
     }
     const { baseUrl } = providerSnapshot.docs[0].data();
 
-    // 2. Fetch all services and countries data
     const pricesUrl = `${baseUrl}/guest/prices`;
     const countriesUrl = `${baseUrl}/guest/countries`;
 
