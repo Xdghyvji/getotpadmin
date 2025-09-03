@@ -1,12 +1,12 @@
 // Netlify Function: functions/sync-provider-data.js
 // Description: Fetches services and countries from the 5sim.net API and saves them to Firestore.
 
+const admin = require('firebase-admin');
 let db;
 
 async function initializeFirebase() {
   if (db) return; // Already initialized
   try {
-    const admin = await import('firebase-admin');
     if (!admin.apps.length) {
       const { FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY } = process.env;
       if (!FIREBASE_PROJECT_ID || !FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY) {
@@ -28,13 +28,13 @@ async function initializeFirebase() {
 }
 
 exports.handler = async function(event) {
-  await initializeFirebase();
-  
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
-  }
-
   try {
+    await initializeFirebase();
+  
+    if (event.httpMethod !== 'POST') {
+      return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
+    }
+
     const { profitPercentage } = JSON.parse(event.body);
     const profitMargin = (profitPercentage / 100) || 0.20;
 
