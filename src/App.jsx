@@ -503,8 +503,10 @@ const FindUserPage = ({ initialSearchTerm, setPage }) => {
 
 const ManageServicesPage = () => {
     const [services, setServices] = useState([]);
-    const [loading, setLoading] = useState({ services: true, sync: false });
+    const [providers, setProviders] = useState([]);
+    const [loading, setLoading] = useState({ services: true, sync: false, providers: true });
     const [selectedServices, setSelectedServices] = useState([]);
+    const [selectedProvider, setSelectedProvider] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
     const { convertCurrency, currencySymbol } = useCurrency();
     const [profitPercentage, setProfitPercentage] = useState(20);
@@ -515,7 +517,14 @@ const ManageServicesPage = () => {
             setServices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
             setLoading(prev => ({ ...prev, services: false }));
         });
-        return () => unsubServices();
+        const unsubProviders = onSnapshot(collection(db, "api_providers"), (snapshot) => {
+            setProviders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+            setLoading(prev => ({ ...prev, providers: false }));
+        });
+        return () => {
+            unsubServices();
+            unsubProviders();
+        };
     }, []);
 
     const handleManualAdd = async (e) => {
@@ -529,9 +538,14 @@ const ManageServicesPage = () => {
     };
 
     const handleSync = async () => {
+        if (!selectedProvider) {
+            alert('Please select a provider first.');
+            return;
+        }
+
         setLoading(prev => ({ ...prev, sync: true }));
         try {
-            const result = await apiCall("syncProviderData", { provider: '5sim' });
+            const result = await apiCall("syncProviderData", { provider: selectedProvider, profitPercentage });
 
             if (result.error) {
                 alert(`Sync failed: ${result.error}`);
@@ -575,12 +589,29 @@ const ManageServicesPage = () => {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <Card className="p-6">
                     <h2 className="text-xl font-bold mb-4">Sync from Provider</h2>
-                    <p className="mb-4 text-gray-600">This will fetch all available services, countries, and prices from the provider, and store them with your specified profit margin.</p>
-                    <div className="flex items-center space-x-2 mb-4">
-                        <input type="number" step="1" value={profitPercentage} onChange={e => setProfitPercentage(Number(e.target.value))} placeholder="Profit %" className="w-24 border-gray-300 rounded-md"/>
-                        <span>% Profit Margin</span>
+                    <p className="mb-4 text-gray-600">This will fetch all available services, countries, and prices from the selected provider, and store them with your specified profit margin.</p>
+                    <div className="space-y-4">
+                        <div className="flex flex-col">
+                            <label htmlFor="providerSelect" className="text-sm font-medium text-gray-700">Select Provider</label>
+                            <select 
+                                id="providerSelect"
+                                value={selectedProvider} 
+                                onChange={e => setSelectedProvider(e.target.value)} 
+                                className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                                disabled={loading.providers}
+                            >
+                                <option value="">-- Select an API Provider --</option>
+                                {providers.map(p => (
+                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <input type="number" step="1" value={profitPercentage} onChange={e => setProfitPercentage(Number(e.target.value))} placeholder="Profit %" className="w-24 border-gray-300 rounded-md"/>
+                            <span>% Profit Margin</span>
+                        </div>
                     </div>
-                    <Button onClick={handleSync} className="w-full" disabled={loading.sync}>{loading.sync ? <Spinner /> : 'Sync with Provider'}</Button>
+                    <Button onClick={handleSync} className="w-full mt-4" disabled={loading.sync || !selectedProvider}>{loading.sync ? <Spinner /> : 'Sync with Provider'}</Button>
                 </Card>
                 <Card className="p-6">
                     <h2 className="text-xl font-bold mb-4">Add Service Manually</h2>
