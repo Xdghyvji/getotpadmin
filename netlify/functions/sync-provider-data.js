@@ -34,14 +34,22 @@ exports.handler = async (event, context) => {
 
         // Fetch prices from the vendor API
         const pricesResponse = await fetch('https://5sim.net/v1/vendor/prices', { headers });
+        if (!pricesResponse.ok) {
+            const errorText = await pricesResponse.text();
+            throw new Error(`Failed to fetch prices from 5sim.net: ${pricesResponse.status} ${pricesResponse.statusText} - ${errorText}`);
+        }
         const pricesData = await pricesResponse.json();
 
         // Fetch countries list
         const countriesResponse = await fetch('https://5sim.net/v1/guest/countries', { headers: { 'Accept': 'application/json' } });
+        if (!countriesResponse.ok) {
+            const errorText = await countriesResponse.text();
+            throw new Error(`Failed to fetch countries from 5sim.net: ${countriesResponse.status} ${countriesResponse.statusText} - ${errorText}`);
+        }
         const countriesData = await countriesResponse.json();
         
-        if (pricesData.error || countriesData.error) {
-            throw new Error(pricesData.error || countriesData.error || 'Failed to fetch data from provider.');
+        if (pricesData.error) {
+            throw new Error(pricesData.error);
         }
 
         const batch = db.batch();
