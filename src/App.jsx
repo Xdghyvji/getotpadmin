@@ -94,6 +94,7 @@ const XCircleIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" hei
 const SyncIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.5 2v6h-6"/><path d="M2.5 22v-6h6"/><path d="M21.5 8a10 10 0 1 1-18.4-5.3L2.5 2"/><path d="M2.5 16a10 10 0 1 1 18.4 5.3L21.5 22"/></svg>;
 const CheckCircleIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-8.77"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>;
 const AlertCircleIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>;
+const PhoneIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-4.73-4.73A19.79 19.79 0 0 1 2 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.45 2.18-.75 4.93-1.8 6.09-.9.9-.11 2.21.36 2.68a18.25 18.25 0 0 0 6.09 6.09c.47.47 1.78 1.26 2.68.36 1.16-1.05 3.91-2.25 6.09-1.8a2 2 0 0 1 1.72 2z"></path></svg>;
 
 // --- Reusable UI Components ---
 const Card = ({ children, className = '' }) => <div className={`bg-white rounded-lg shadow-sm ${className}`}>{children}</div>;
@@ -801,6 +802,192 @@ const ManageServersPage = () => {
     );
 };
 
+const ManageOperatorsPage = () => {
+    const [operators, setOperators] = useState([]);
+    const [providers, setProviders] = useState([]);
+    const [servers, setServers] = useState([]);
+    const [services, setServices] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [selectedOperators, setSelectedOperators] = useState([]);
+    const [selectedProvider, setSelectedProvider] = useState('');
+    const [selectedServer, setSelectedServer] = useState('');
+    const [selectedService, setSelectedService] = useState('');
+    const [searchTerm, setSearchTerm] = useState('');
+    const { convertCurrency, currencySymbol } = useCurrency();
+    
+    useEffect(() => {
+        const unsub = onSnapshot(collection(db, "api_providers"), (snapshot) => {
+            setProviders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        });
+        const unsubServers = onSnapshot(collection(db, "servers"), (snapshot) => {
+            setServers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        });
+        const unsubServices = onSnapshot(collection(db, "services"), (snapshot) => {
+            setServices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        });
+        return () => { unsub(); unsubServers(); unsubServices(); };
+    }, []);
+
+    const fetchAndSaveOperators = async () => {
+        if (!selectedProvider || !selectedServer || !selectedService) return;
+        setLoading(true);
+        try {
+            const response = await fetch('/.netlify/functions/api-proxy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    provider: selectedProvider, 
+                    endpoint: `/guest/prices?country=${selectedServer}&product=${selectedService}` 
+                }),
+            });
+            const result = await response.json();
+            if (response.ok && result) {
+                const batch = writeBatch(db);
+                // Delete existing operators for this service/server pair
+                const existingOps = await getDocs(query(collection(db, "operators"), where("provider", "==", selectedProvider), where("server", "==", selectedServer), where("service", "==", selectedService)));
+                existingOps.forEach(doc => batch.delete(doc.ref));
+
+                const countryData = result[selectedServer];
+                if (countryData && countryData[selectedService]) {
+                    Object.entries(countryData[selectedService]).forEach(([name, details]) => {
+                        const operatorRef = doc(collection(db, "operators"));
+                        batch.set(operatorRef, {
+                            name: name,
+                            provider: selectedProvider,
+                            server: selectedServer,
+                            service: selectedService,
+                            price: details.cost,
+                            count: details.count
+                        });
+                    });
+                }
+                await batch.commit();
+            } else {
+                throw new Error(result.error || "Failed to fetch operators");
+            }
+        } catch (error) {
+            console.error("Error fetching and saving operators:", error);
+        }
+        setLoading(false);
+    };
+
+    const handleSelectOperator = (id) => {
+        setSelectedOperators(prev => prev.includes(id) ? prev.filter(oId => oId !== id) : [...prev, id]);
+    };
+
+    const handleSelectAllOperators = (e) => {
+        if (e.target.checked) {
+            setSelectedOperators(operators.map(o => o.id));
+        } else {
+            setSelectedOperators([]);
+        }
+    };
+    
+    const handleBulkDeleteOperators = async () => {
+        if (selectedOperators.length === 0 || !window.confirm(`Delete ${selectedOperators.length} selected operators?`)) return;
+        const batch = writeBatch(db);
+        selectedOperators.forEach(id => {
+            batch.delete(doc(db, "operators", id));
+        });
+        await batch.commit();
+        setSelectedOperators([]);
+    };
+
+    const filteredOperators = operators.filter(o => o.name?.toLowerCase().includes(searchTerm.toLowerCase()));
+
+    return (
+        <div>
+            <h1 className="text-3xl font-bold mb-6">Manage Operators</h1>
+            <Card className="p-6 mb-8">
+                <div className="flex items-end justify-between">
+                    <div className="flex-1 space-y-2">
+                        <h2 className="text-xl font-bold">Synchronize Operators from Provider</h2>
+                        <p className="text-sm text-gray-500">Fetches operators for a specific provider, country, and service, then saves them to your database.</p>
+                        <div className="flex items-center space-x-4">
+                            <select 
+                                value={selectedProvider} 
+                                onChange={(e) => setSelectedProvider(e.target.value)} 
+                                className="w-40 border-gray-300 rounded-md"
+                            >
+                                <option value="">Select Provider</option>
+                                {providers.map(p => (
+                                    <option key={p.id} value={p.name}>{p.name}</option>
+                                ))}
+                            </select>
+                            <select 
+                                value={selectedServer} 
+                                onChange={(e) => setSelectedServer(e.target.value)} 
+                                className="w-40 border-gray-300 rounded-md"
+                            >
+                                <option value="">Select Server</option>
+                                {servers.map(s => (
+                                    <option key={s.id} value={s.name}>{s.location}</option>
+                                ))}
+                            </select>
+                             <select 
+                                value={selectedService} 
+                                onChange={(e) => setSelectedService(e.target.value)} 
+                                className="w-40 border-gray-300 rounded-md"
+                            >
+                                <option value="">Select Service</option>
+                                {services.map(s => (
+                                    <option key={s.id} value={s.name.toLowerCase()}>{s.name}</option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+                    <Button onClick={fetchAndSaveOperators} disabled={loading || !selectedProvider || !selectedServer || !selectedService}>
+                        <div className="flex items-center space-x-2">
+                            {loading ? <Spinner /> : <SyncIcon />}
+                            <span>Sync Operators</span>
+                        </div>
+                    </Button>
+                </div>
+            </Card>
+            <Card>
+                <div className="p-4 flex justify-between items-center">
+                    <h2 className="text-xl font-bold">Existing Operators ({operators.length})</h2>
+                    <div className="flex items-center space-x-4">
+                        <div className="relative">
+                            <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search operators..." className="w-full border-gray-300 rounded-md shadow-sm pl-10" />
+                            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                        </div>
+                        {selectedOperators.length > 0 && (
+                            <Button onClick={handleBulkDeleteOperators} className="bg-red-600 hover:bg-red-700">Delete Selected ({selectedOperators.length})</Button>
+                        )}
+                    </div>
+                </div>
+                <div className="overflow-x-auto">
+                    {loading ? <Spinner /> : (
+                        <table className="min-w-full">
+                            <thead className="bg-gray-50">
+                                <tr>
+                                    <th className="px-6 py-3"><input type="checkbox" onChange={handleSelectAllOperators} checked={selectedOperators.length === operators.length && operators.length > 0} /></th>
+                                    <th className="px-6 py-3 text-left">Name</th>
+                                    <th className="px-6 py-3 text-left">Price</th>
+                                    <th className="px-6 py-3 text-left">Count</th>
+                                    <th className="px-6 py-3 text-left">Provider</th>
+                                </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-200">
+                                {filteredOperators.map(op => (
+                                    <tr key={op.id}>
+                                        <td className="px-6 py-4"><input type="checkbox" checked={selectedOperators.includes(op.id)} onChange={() => handleSelectOperator(op.id)} /></td>
+                                        <td className="px-6 py-4">{op.name}</td>
+                                        <td className="px-6 py-4">{currencySymbol} {convertCurrency(op.price)}</td>
+                                        <td className="px-6 py-4">{op.count}</td>
+                                        <td className="px-6 py-4">{op.provider}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+            </Card>
+        </div>
+    );
+};
+
 const NumberHistoryPage = () => {
     const [orders, setOrders] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -894,6 +1081,7 @@ const sidebarItems = [
     { name: 'Find User', icon: <SearchIcon />, page: 'find_user' },
     { name: 'Manage Services', icon: <PlusCircleIcon />, page: 'manage_services' },
     { name: 'Manage Servers', icon: <ServerIcon />, page: 'manage_servers' },
+    { name: 'Manage Operators', icon: <PhoneIcon />, page: 'manage_operators'},
     { name: 'Manage APIs', icon: <CodeIcon />, page: 'manage_apis' },
     { name: 'Number History', icon: <ListIcon />, page: 'number_history' },
 ];
@@ -938,9 +1126,10 @@ const AdminPanel = ({ admin, setAdmin }) => {
             case 'blocked_user': return <ManageUsersPage filter="blocked" />;
             case 'find_user': return <FindUserPage initialSearchTerm={globalSearchTerm} setPage={setPage} />;
             case 'manage_services': return <ManageServicesPage />;
-            case 'number_history': return <NumberHistoryPage />;
-            case 'manage_apis': return <ManageApisPage />;
             case 'manage_servers': return <ManageServersPage />;
+            case 'manage_operators': return <ManageOperatorsPage />;
+            case 'manage_apis': return <ManageApisPage />;
+            case 'number_history': return <NumberHistoryPage />;
             default: return <ContentPage title={sidebarItems.find(item => item.page === page)?.name || 'Page'} />;
         }
     };
