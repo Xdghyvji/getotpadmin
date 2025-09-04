@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef, createContext, useContext } from 'react';
+import React from 'react';
+import { useState, useEffect, useRef, createContext, useContext } from 'react';
 
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from 'firebase/app';
@@ -27,13 +28,13 @@ import {
 
 // --- FIREBASE CONFIGURATION ---
 const firebaseConfig = {
-    apiKey: "AIzaSyBVruE0hRVZisHlnnyuWBl-PZp3-DMp028",
-    authDomain: "pakages-provider.firebaseapp.com",
-    projectId: "pakages-provider",
-    storageBucket: "pakages-provider.appspot.com",
-    messagingSenderId: "109547136506",
-    appId: "1:109547136506:web:c9d34657d73b0fcc3ef043",
-    measurementId: "G-672LC3842S"
+  apiKey: "AIzaSyBVruE0hRVZisHlnnyuWBl-PZp3-DMp028",
+  authDomain: "pakages-provider.firebaseapp.com",
+  projectId: "pakages-provider",
+  storageBucket: "pakages-provider.appspot.com",
+  messagingSenderId: "109547136506",
+  appId: "1:109547136506:web:c9d34657d73b0fcc3ef043",
+  measurementId: "G-672LC3842S"
 };
 
 // Initialize Firebase
@@ -90,6 +91,9 @@ const ClockIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" heigh
 const TrashIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>;
 const EditIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>;
 const XCircleIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>;
+const SyncIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.5 2v6h-6"/><path d="M2.5 22v-6h6"/><path d="M21.5 8a10 10 0 1 1-18.4-5.3L2.5 2"/><path d="M2.5 16a10 10 0 1 1 18.4 5.3L21.5 22"/></svg>;
+const CheckCircleIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-8.77"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>;
+const AlertCircleIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>;
 
 // --- Reusable UI Components ---
 const Card = ({ children, className = '' }) => <div className={`bg-white rounded-lg shadow-sm ${className}`}>{children}</div>;
@@ -113,26 +117,21 @@ const Pagination = ({ currentPage, totalPages, onPageChange }) => {
 };
 
 // --- API Call Function ---
-const apiCall = async (action, payload) => {
-    try {
-        const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : null;
-        const response = await fetch(`/.netlify/functions/api-proxy`, {
-            method: 'POST',
-            body: JSON.stringify({ action, payload }),
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${idToken}`
-            },
-        });
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-        }
-        return await response.json();
-    } catch (error) {
-        console.error("API Call Failed:", error);
-        return { error: error.message };
+const apiCall = async (provider, endpoint, method = 'GET', body = null) => {
+  try {
+    const response = await fetch('/.netlify/functions/api-proxy', {
+      method: 'POST',
+      body: JSON.stringify({ provider, endpoint, method, body }),
+    });
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
     }
+    return await response.json();
+  } catch (error) {
+    console.error("API Call Failed:", error);
+    return { error: error.message };
+  }
 };
 
 
@@ -218,35 +217,23 @@ const StatCard = ({ title, value, icon, change, changeType }) => {
 };
 
 const DashboardPage = () => {
-    const [stats, setStats] = useState({ totalUsers: 0, totalRecharge: 0, totalOtpSellAmount: 0 });
+    const [stats, setStats] = useState({ totalUsers: 0, totalRecharge: 0, totalOtpSellAmount: 29511 });
     const [topUsers, setTopUsers] = useState([]);
     const [loading, setLoading] = useState(true);
     const { convertCurrency, currencySymbol } = useCurrency();
 
     useEffect(() => {
-        const unsubUsers = onSnapshot(collection(db, "users"), async (snapshot) => {
-            const usersData = await Promise.all(snapshot.docs.map(async (doc) => {
-                const userData = { id: doc.id, ...doc.data() };
-                // Fetch and sum all transactions
-                const transactionsSnapshot = await getDocs(collection(db, "users", userData.id, "transactions"));
-                const totalRecharge = transactionsSnapshot.docs.reduce((sum, transDoc) => sum + (transDoc.data().amount || 0), 0);
-                // Fetch and sum all orders
-                const ordersSnapshot = await getDocs(collection(db, "users", userData.id, "orders"));
-                const totalOtpBuy = ordersSnapshot.docs.reduce((sum, orderDoc) => sum + (orderDoc.data().price || 0), 0);
-                return { ...userData, totalRecharge, totalOtpBuy };
-            }));
-
+        const q = query(collection(db, "users"));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const usersData = snapshot.docs.map(doc => doc.data());
             const totalUsers = usersData.length;
-            const totalRecharge = usersData.reduce((acc, user) => acc + (user.totalRecharge || 0), 0);
-            const totalOtpSellAmount = usersData.reduce((acc, user) => acc + (user.totalOtpBuy || 0), 0);
+            const totalRecharge = usersData.reduce((acc, user) => acc + (user.balance || 0), 0);
             const sortedUsers = [...usersData].sort((a, b) => b.balance - a.balance).slice(0, 5);
-
-            setStats({ totalUsers, totalRecharge, totalOtpSellAmount });
+            setStats(prev => ({ ...prev, totalUsers, totalRecharge }));
             setTopUsers(sortedUsers);
             setLoading(false);
         });
-
-        return () => unsubUsers();
+        return () => unsubscribe();
     }, []);
 
     if (loading) return <Spinner />;
@@ -256,9 +243,9 @@ const DashboardPage = () => {
             <h1 className="text-3xl font-bold mb-6">Dashboard</h1>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
                 <StatCard title="TOTAL USER" value={stats.totalUsers} icon={<UsersIcon />} />
-                <StatCard title="TOTAL RECHARGE AMOUNT" value={stats.totalRecharge} icon={<ShoppingCartIcon />} />
+                <StatCard title="TOTAL RECHARGE" value={stats.totalRecharge} icon={<ShoppingCartIcon />} />
+                <StatCard title="TOTAL OTP SELL" value="194" icon={<TrendingUpIcon />} />
                 <StatCard title="TOTAL OTP SELL AMOUNT" value={stats.totalOtpSellAmount} icon={<DollarSignIcon />} />
-                <StatCard title="TOTAL OTP SELL" value="194" icon={<TrendingUpIcon />} /> {/* Placeholder as there is no field to count this in the orders collection */}
             </div>
             <Card>
                 <div className="p-4"><h2 className="text-xl font-bold">Top Users by Balance</h2></div>
@@ -268,7 +255,7 @@ const DashboardPage = () => {
                             <tr>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">#</th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Current Balance</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total Balance</th>
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
@@ -290,7 +277,6 @@ const DashboardPage = () => {
 const EditUserModal = ({ user, onClose, onSave }) => {
     const [balance, setBalance] = useState(user.balance || 0);
     const [loading, setLoading] = useState(false);
-    const { convertCurrency, currencySymbol } = useCurrency();
 
     const handleSave = async () => {
         setLoading(true);
@@ -316,12 +302,12 @@ const EditUserModal = ({ user, onClose, onSave }) => {
                         <input type="number" step="0.01" value={balance} onChange={e => setBalance(e.target.value)} className="w-full mt-1 border-gray-300 rounded-md" />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium">Total Recharge</label>
-                        <input value={`${currencySymbol} ${convertCurrency(user.totalRecharge || 0)}`} disabled className="w-full mt-1 border-gray-300 rounded-md bg-gray-100" />
+                        <label className="block text-sm font-medium">Total Recharge (Display Only)</label>
+                        <input value={user.totalRecharge || 0} disabled className="w-full mt-1 border-gray-300 rounded-md bg-gray-100" />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium">Total OTP Buy</label>
-                        <input value={`${currencySymbol} ${convertCurrency(user.totalOtpBuy || 0)}`} disabled className="w-full mt-1 border-gray-300 rounded-md bg-gray-100" />
+                        <label className="block text-sm font-medium">Total OTP Buy (Display Only)</label>
+                        <input value={user.totalOtpBuy || 0} disabled className="w-full mt-1 border-gray-300 rounded-md bg-gray-100" />
                     </div>
                 </div>
                 <div className="mt-6 flex justify-end space-x-4">
@@ -363,7 +349,7 @@ const UserTable = ({ users, onStatusChange, onEdit }) => {
                         <td className="px-6 py-4 space-x-4">
                             <button onClick={() => onEdit(user)} className="text-blue-600 hover:text-blue-900"><EditIcon /></button>
                             <button onClick={() => onStatusChange(user.id, user.status === 'blocked' ? 'active' : 'blocked')} 
-                                            className={`text-sm font-medium ${user.status === 'blocked' ? 'text-green-600 hover:text-green-900' : 'text-red-600 hover:text-red-900'}`}>
+                                    className={`text-sm font-medium ${user.status === 'blocked' ? 'text-green-600 hover:text-green-900' : 'text-red-600 hover:text-red-900'}`}>
                                 {user.status === 'blocked' ? 'Unblock' : 'Block'}
                             </button>
                         </td>
@@ -383,24 +369,18 @@ const ManageUsersPage = ({ filter }) => {
     const itemsPerPage = 10;
 
     useEffect(() => {
-        let q = collection(db, "users");
+        let q;
         if (filter) {
-            q = query(q, where("status", "==", filter));
+            q = query(collection(db, "users"), where("status", "==", filter));
+        } else {
+            q = query(collection(db, "users"));
         }
-
-        const unsubscribe = onSnapshot(q, async (snapshot) => {
-            const usersWithStats = await Promise.all(snapshot.docs.map(async (userDoc) => {
-                const userData = { id: userDoc.id, ...userDoc.data() };
-                const ordersSnapshot = await getDocs(collection(db, "users", userData.id, "orders"));
-                const totalOtpBuy = ordersSnapshot.docs.reduce((sum, orderDoc) => sum + (orderDoc.data().price || 0), 0);
-                const transactionsSnapshot = await getDocs(collection(db, "users", userData.id, "transactions"));
-                const totalRecharge = transactionsSnapshot.docs.reduce((sum, transDoc) => sum + (transDoc.data().amount || 0), 0);
-                return { ...userData, totalOtpBuy, totalRecharge };
-            }));
-            setUsers(usersWithStats);
+        
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const usersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setUsers(usersData);
             setLoading(false);
         });
-        
         return () => unsubscribe();
     }, [filter]);
 
@@ -485,7 +465,7 @@ const FindUserPage = ({ initialSearchTerm, setPage }) => {
 
     return (
         <div>
-            {editingUser && <EditUserModal user={editingUser} onClose={() => setEditingUser(null)} onSave={handleSaveUser} />}
+             {editingUser && <EditUserModal user={editingUser} onClose={() => setEditingUser(null)} onSave={handleSaveUser} />}
             <h1 className="text-3xl font-bold mb-6">Find User</h1>
             <Card className="p-6">
                 <form onSubmit={e => e.preventDefault()} className="flex space-x-4 mb-6">
@@ -503,152 +483,95 @@ const FindUserPage = ({ initialSearchTerm, setPage }) => {
 
 const ManageServicesPage = () => {
     const [services, setServices] = useState([]);
-    const [providers, setProviders] = useState([]);
-    const [loading, setLoading] = useState({ services: true, sync: false, providers: true });
-    const [selectedServices, setSelectedServices] = useState([]);
-    const [selectedProvider, setSelectedProvider] = useState('');
+    const [syncStatus, setSyncStatus] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [commission, setCommission] = useState(20);
     const [searchTerm, setSearchTerm] = useState('');
     const { convertCurrency, currencySymbol } = useCurrency();
-    const [profitPercentage, setProfitPercentage] = useState(20);
-    const [manualForm, setManualForm] = useState({ name: '', icon: '', price: '' });
-
+    
     useEffect(() => {
         const unsubServices = onSnapshot(collection(db, "services"), (snapshot) => {
-            setServices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-            setLoading(prev => ({ ...prev, services: false }));
+            const servicesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setServices(servicesData);
+            setLoading(false);
         });
-        const unsubProviders = onSnapshot(collection(db, "api_providers"), (snapshot) => {
-            setProviders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-            setLoading(prev => ({ ...prev, providers: false }));
-        });
-        return () => {
-            unsubServices();
-            unsubProviders();
-        };
+        return () => unsubServices();
     }, []);
 
-    const handleManualAdd = async (e) => {
-        e.preventDefault();
-        const { name, icon, price } = manualForm;
-        if (!name || !price) return;
-        await addDoc(collection(db, "services"), {
-            name, icon, price: parseFloat(price), status: 'active', provider: 'manual'
-        });
-        setManualForm({ name: '', icon: '', price: '' });
-    };
-
     const handleSync = async () => {
-        if (!selectedProvider) {
-            alert('Please select a provider first.');
-            return;
-        }
-
-        setLoading(prev => ({ ...prev, sync: true }));
+        setSyncStatus('syncing');
         try {
-            const result = await apiCall("syncProviderData", { provider: selectedProvider, profitPercentage });
+            const response = await fetch('/.netlify/functions/sync-provider-data', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ commission })
+            });
 
-            if (result.error) {
-                alert(`Sync failed: ${result.error}`);
+            const result = await response.json();
+            if (response.ok) {
+                setSyncStatus('success');
             } else {
-                alert(result.message);
+                setSyncStatus('error');
+                console.error("Sync failed:", result.error);
             }
         } catch (error) {
-            alert(`An unexpected error occurred: ${error.message}`);
-        } finally {
-            setLoading(prev => ({ ...prev, sync: false }));
+            setSyncStatus('error');
+            console.error("Sync failed:", error);
         }
     };
 
-    const handleSelect = (id) => {
-        setSelectedServices(prev => prev.includes(id) ? prev.filter(sId => sId !== id) : [...prev, id]);
-    };
+    const filteredServices = services.filter(s => s.name?.toLowerCase().includes(searchTerm.toLowerCase()));
+
+    const syncIcon = syncStatus === 'syncing' ? <Spinner /> : syncStatus === 'success' ? <CheckCircleIcon /> : <SyncIcon />;
     
-    const handleSelectAll = (e) => {
-        if (e.target.checked) {
-            setSelectedServices(services.map(s => s.id));
-        } else {
-            setSelectedServices([]);
-        }
-    };
-
-    const handleBulkDelete = async () => {
-        if (selectedServices.length === 0 || !window.confirm(`Delete ${selectedServices.length} selected services?`)) return;
-        const batch = writeBatch(db);
-        selectedServices.forEach(id => {
-            batch.delete(doc(db, "services", id));
-        });
-        await batch.commit();
-        setSelectedServices([]);
-    };
-
-    const filteredServices = services.filter(s => s.name.toLowerCase().includes(searchTerm.toLowerCase()));
-
     return (
         <div>
             <h1 className="text-3xl font-bold mb-6">Manage Services</h1>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <Card className="p-6">
-                    <h2 className="text-xl font-bold mb-4">Sync from Provider</h2>
-                    <p className="mb-4 text-gray-600">This will fetch all available services, countries, and prices from the selected provider, and store them with your specified profit margin.</p>
-                    <div className="space-y-4">
-                        <div className="flex flex-col">
-                            <label htmlFor="providerSelect" className="text-sm font-medium text-gray-700">Select Provider</label>
-                            <select 
-                                id="providerSelect"
-                                value={selectedProvider} 
-                                onChange={e => setSelectedProvider(e.target.value)} 
-                                className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
-                                disabled={loading.providers}
-                            >
-                                <option value="">-- Select an API Provider --</option>
-                                {providers.map(p => (
-                                    <option key={p.id} value={p.id}>{p.name}</option>
-                                ))}
-                            </select>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                            <input type="number" step="1" value={profitPercentage} onChange={e => setProfitPercentage(Number(e.target.value))} placeholder="Profit %" className="w-24 border-gray-300 rounded-md"/>
-                            <span>% Profit Margin</span>
-                        </div>
+            <Card className="p-6 mb-8">
+                <div className="flex items-end justify-between">
+                    <div className="flex-1 space-y-2">
+                        <h2 className="text-xl font-bold">Synchronize Services from Provider</h2>
+                        <p className="text-sm text-gray-500">Fetches all available services from the 5sim.net API and saves them to your database.</p>
+                        <label className="block text-sm font-medium text-gray-700 mt-4">Profit Margin (%)</label>
+                        <input 
+                            type="number" 
+                            min="0"
+                            value={commission}
+                            onChange={(e) => setCommission(e.target.value)}
+                            className="w-40 border-gray-300 rounded-md"
+                        />
                     </div>
-                    <Button onClick={handleSync} className="w-full mt-4" disabled={loading.sync || !selectedProvider}>{loading.sync ? <Spinner /> : 'Sync with Provider'}</Button>
-                </Card>
-                <Card className="p-6">
-                    <h2 className="text-xl font-bold mb-4">Add Service Manually</h2>
-                    <form onSubmit={handleManualAdd} className="space-y-4">
-                        <input value={manualForm.name} onChange={e => setManualForm({...manualForm, name: e.target.value})} placeholder="Service Name (e.g., Facebook)" required className="w-full border-gray-300 rounded-md"/>
-                        <input value={manualForm.icon} onChange={e => setManualForm({...manualForm, icon: e.target.value})} placeholder="Emoji Icon (e.g., 👍)" className="w-full border-gray-300 rounded-md"/>
-                        <input type="number" step="0.01" value={manualForm.price} onChange={e => setManualForm({...manualForm, price: e.target.value})} placeholder="Price (in USD)" required className="w-full border-gray-300 rounded-md"/>
-                        <Button type="submit" className="w-full">Add Manually</Button>
-                    </form>
-                </Card>
-            </div>
-            <Card className="mt-8">
+                    <Button onClick={handleSync} disabled={syncStatus === 'syncing'}>
+                        <div className="flex items-center space-x-2">
+                            {syncIcon}
+                            <span>Sync with Provider</span>
+                        </div>
+                    </Button>
+                </div>
+                {syncStatus === 'success' && <p className="text-green-600 mt-4 flex items-center"><CheckCircleIcon className="w-5 h-5 mr-2" /> Sync successful!</p>}
+                {syncStatus === 'error' && <p className="text-red-600 mt-4 flex items-center"><AlertCircleIcon className="w-5 h-5 mr-2" /> Sync failed. Check console for details.</p>}
+            </Card>
+            <Card>
                 <div className="p-4 flex justify-between items-center">
-                    <h2 className="text-xl font-bold">Existing Services</h2>
+                    <h2 className="text-xl font-bold">Existing Services ({services.length})</h2>
                     <div className="w-1/3 relative">
                         <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search services..." className="w-full border-gray-300 rounded-md shadow-sm pl-10" />
                         <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                     </div>
-                    {selectedServices.length > 0 && (
-                        <Button onClick={handleBulkDelete} className="bg-red-600 hover:bg-red-700">Delete Selected ({selectedServices.length})</Button>
-                    )}
                 </div>
                 <div className="overflow-x-auto">
-                    {loading.services ? <Spinner /> : (
+                    {loading ? <Spinner /> : (
                         <table className="min-w-full">
                             <thead className="bg-gray-50">
                                 <tr>
-                                    <th className="px-6 py-3"><input type="checkbox" onChange={handleSelectAll} /></th>
                                     <th className="px-6 py-3 text-left">Name</th>
-                                    <th className="px-6 py-3 text-left">Price (USD)</th>
+                                    <th className="px-6 py-3 text-left">Price</th>
                                     <th className="px-6 py-3 text-left">Provider</th>
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
                                 {filteredServices.map(s => (
-                                    <tr key={s.id} className={selectedServices.includes(s.id) ? 'bg-blue-50' : ''}>
-                                        <td className="px-6 py-4"><input type="checkbox" checked={selectedServices.includes(s.id)} onChange={() => handleSelect(s.id)} /></td>
+                                    <tr key={s.id}>
                                         <td className="px-6 py-4 flex items-center">{s.icon && <span className="mr-3 text-xl">{s.icon}</span>}{s.name}</td>
                                         <td className="px-6 py-4">{currencySymbol} {convertCurrency(s.price)}</td>
                                         <td className="px-6 py-4">{s.provider}</td>
@@ -736,6 +659,8 @@ const ManageApisPage = () => {
 const ManageServersPage = () => {
     const [servers, setServers] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [serverName, setServerName] = useState('');
+    const [serverLocation, setServerLocation] = useState('');
 
     useEffect(() => {
         const q = query(collection(db, "servers"));
@@ -746,6 +671,15 @@ const ManageServersPage = () => {
         return () => unsubscribe();
     }, []);
 
+    const handleAddServer = async (e) => {
+        e.preventDefault();
+        if (!serverName) return;
+        await addDoc(collection(db, "servers"), {
+            name: serverName, location: serverLocation, status: 'active'
+        });
+        setServerName(''); setServerLocation('');
+    };
+
     const handleDeleteServer = async (id) => {
         if(window.confirm("Are you sure?")) await deleteDoc(doc(db, "servers", id));
     };
@@ -753,6 +687,14 @@ const ManageServersPage = () => {
     return (
         <div>
             <h1 className="text-3xl font-bold mb-6">Manage Servers (Countries)</h1>
+            <Card className="p-6 mb-8">
+                <h2 className="text-xl font-bold mb-4">Add New Server/Country</h2>
+                <form onSubmit={handleAddServer} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                    <input value={serverName} onChange={e => setServerName(e.target.value)} placeholder="Country Name (e.g., england)" className="md:col-span-1 border-gray-300 rounded-md" />
+                    <input value={serverLocation} onChange={e => setServerLocation(e.target.value)} placeholder="Display Location (e.g., UK)" className="md:col-span-1 border-gray-300 rounded-md" />
+                    <Button type="submit" className="md:col-span-1 w-full">Add Server</Button>
+                </form>
+            </Card>
             <Card>
                 <div className="overflow-x-auto">
                     {loading ? <Spinner /> : (
@@ -760,8 +702,7 @@ const ManageServersPage = () => {
                             <thead className="bg-gray-50">
                                 <tr>
                                     <th className="px-6 py-3 text-left">Name (for API)</th>
-                                    <th className="px-6 py-3 text-left">Location</th>
-                                    <th className="px-6 py-3 text-left">Flag</th>
+                                    <th className="px-6 py-3 text-left">Location (for Display)</th>
                                     <th className="px-6 py-3 text-left">Status</th>
                                     <th className="px-6 py-3 text-left">Actions</th>
                                 </tr>
@@ -771,16 +712,7 @@ const ManageServersPage = () => {
                                     <tr key={server.id}>
                                         <td className="px-6 py-4">{server.name}</td>
                                         <td className="px-6 py-4">{server.location}</td>
-                                        <td className="px-6 py-4">
-                                            {server.iso && (
-                                                <img 
-                                                    src={`https://flagcdn.com/w20/${server.iso.toLowerCase()}.png`} 
-                                                    alt={`Flag of ${server.location}`} 
-                                                    className="w-8 h-auto inline-block"
-                                                />
-                                            )}
-                                        </td>
-                                        <td className="px-6 py-4"><span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">{server.status || 'active'}</span></td>
+                                        <td className="px-6 py-4"><span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">{server.status}</span></td>
                                         <td className="px-6 py-4"><button onClick={() => handleDeleteServer(server.id)} className="text-red-600 hover:text-red-900"><TrashIcon /></button></td>
                                     </tr>
                                 ))}
@@ -840,31 +772,31 @@ const NumberHistoryPage = () => {
                 </div>
                 <div className="overflow-x-auto">
                     {loading ? <Spinner /> : (
-                        <table className="min-w-full">
-                            <thead className="bg-gray-50">
-                                <tr>
-                                    <th className="px-6 py-3 text-left">Service</th>
-                                    <th className="px-6 py-3 text-left">Number</th>
-                                    <th className="px-6 py-3 text-left">Charge</th>
-                                    <th className="px-6 py-3 text-left">Buy Time</th>
-                                    <th className="px-6 py-3 text-left">User ID</th>
-                                </tr>
-                            </thead>
-                            <tbody className="bg-white divide-y divide-gray-200">
-                                {paginatedOrders.map(order => (
-                                    <tr key={order.id}>
-                                        <td className="px-6 py-4">{order.product}</td>
-                                        <td className="px-6 py-4">{order.phone}</td>
-                                        <td className="px-6 py-4">{currencySymbol} {convertCurrency(order.price)}</td>
-                                        <td className="px-6 py-4">{order.createdAt && new Date(order.createdAt.seconds * 1000).toLocaleString()}</td>
-                                        <td className="px-6 py-4 text-xs">{order.userId}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                         <table className="min-w-full">
+                             <thead className="bg-gray-50">
+                                 <tr>
+                                     <th className="px-6 py-3 text-left">Service</th>
+                                     <th className="px-6 py-3 text-left">Number</th>
+                                     <th className="px-6 py-3 text-left">Charge</th>
+                                     <th className="px-6 py-3 text-left">Buy Time</th>
+                                     <th className="px-6 py-3 text-left">User ID</th>
+                                 </tr>
+                             </thead>
+                             <tbody className="bg-white divide-y divide-gray-200">
+                                 {paginatedOrders.map(order => (
+                                     <tr key={order.id}>
+                                         <td className="px-6 py-4">{order.product}</td>
+                                         <td className="px-6 py-4">{order.phone}</td>
+                                         <td className="px-6 py-4">{currencySymbol} {convertCurrency(order.price)}</td>
+                                         <td className="px-6 py-4">{order.createdAt && new Date(order.createdAt.seconds * 1000).toLocaleString()}</td>
+                                         <td className="px-6 py-4 text-xs">{order.userId}</td>
+                                     </tr>
+                                 ))}
+                             </tbody>
+                         </table>
                     )}
                 </div>
-                <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} />
+                 <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} />
             </Card>
         </div>
     );
@@ -898,7 +830,7 @@ const Sidebar = ({ page, setPage, isSidebarOpen, setSidebarOpen }) => (
         <nav className="flex-grow p-4 space-y-2 overflow-y-auto">
             {sidebarItems.map(item => (
                 <a key={item.page} href="#" onClick={(e) => { e.preventDefault(); setPage(item.page); isSidebarOpen && setSidebarOpen(false); }}
-                    className={`flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${page === item.page ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}>
+                   className={`flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${page === item.page ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}>
                     {item.icon}
                     <span>{item.name}</span>
                 </a>
@@ -952,8 +884,8 @@ const AdminPanel = ({ admin, setAdmin }) => {
                 <header className="bg-white shadow-sm h-16 flex items-center justify-between px-6">
                     <button className="md:hidden" onClick={() => setSidebarOpen(true)}><MenuIcon /></button>
                     <form onSubmit={handleGlobalSearch} className="relative w-1/3">
-                        <input value={globalSearchTerm} onChange={e => setGlobalSearchTerm(e.target.value)} placeholder="Search user by email..." className="w-full border-gray-300 rounded-md pl-10" />
-                        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                            <input value={globalSearchTerm} onChange={e => setGlobalSearchTerm(e.target.value)} placeholder="Search user by email..." className="w-full border-gray-300 rounded-md pl-10" />
+                            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                     </form>
                     <div className="flex items-center space-x-4">
                         <select onChange={(e) => setCurrency(e.target.value)} className="border-gray-300 rounded-md">
