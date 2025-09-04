@@ -115,12 +115,13 @@ const Pagination = ({ currentPage, totalPages, onPageChange }) => {
 // --- API Call Function ---
 const apiCall = async (action, payload) => {
     try {
+        const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : null;
         const response = await fetch(`/.netlify/functions/api-proxy`, {
             method: 'POST',
             body: JSON.stringify({ action, payload }),
             headers: {
                 'Content-Type': 'application/json',
-                // Admin token is implicitly handled by the context/user auth state
+                'Authorization': `Bearer ${idToken}`
             },
         });
         if (!response.ok) {
