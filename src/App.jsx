@@ -483,9 +483,9 @@ const FindUserPage = ({ initialSearchTerm, setPage }) => {
 
 const ManageServicesPage = () => {
     const [services, setServices] = useState([]);
-    const [syncStatus, setSyncStatus] = useState(null);
+    const [providers, setProviders] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [commission, setCommission] = useState(20);
+    const [selectedProvider, setSelectedProvider] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
     const { convertCurrency, currencySymbol } = useCurrency();
     
@@ -495,34 +495,56 @@ const ManageServicesPage = () => {
             setServices(servicesData);
             setLoading(false);
         });
-        return () => unsubServices();
+        const unsubProviders = onSnapshot(collection(db, "api_providers"), (snapshot) => {
+            setProviders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        });
+        return () => { unsubServices(); unsubProviders(); };
     }, []);
 
-    const handleSync = async () => {
-        setSyncStatus('syncing');
+    const fetchAndSaveServices = async () => {
+        if (!selectedProvider) return;
+        setLoading(true);
         try {
-            const response = await fetch('/.netlify/functions/sync-provider-data', {
+            const providerDoc = providers.find(p => p.name === selectedProvider);
+            if (!providerDoc) throw new Error("Provider not found");
+
+            const response = await fetch('/.netlify/functions/api-proxy', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ commission })
+                body: JSON.stringify({ provider: selectedProvider, endpoint: '/guest/products/any/any' }),
             });
 
             const result = await response.json();
-            if (response.ok) {
-                setSyncStatus('success');
+            if (response.ok && result) {
+                const batch = writeBatch(db);
+                // First, delete all existing services for this provider to avoid duplicates
+                const existingServices = await getDocs(query(collection(db, "services"), where("provider", "==", selectedProvider)));
+                existingServices.forEach(doc => batch.delete(doc.ref));
+
+                Object.entries(result).forEach(([name, details]) => {
+                    const serviceRef = doc(collection(db, "services"));
+                    // Use a fixed profit margin for now, or add a field to the UI
+                    const profitMargin = 0.20;
+                    const newPrice = details.Price * (1 + profitMargin);
+                    batch.set(serviceRef, {
+                        name: name.charAt(0).toUpperCase() + name.slice(1),
+                        price: parseFloat(newPrice.toFixed(2)),
+                        provider: selectedProvider,
+                        originalPrice: details.Price,
+                        status: 'active'
+                    });
+                });
+                await batch.commit();
             } else {
-                setSyncStatus('error');
-                console.error("Sync failed:", result.error);
+                throw new Error(result.error || "Failed to fetch services");
             }
         } catch (error) {
-            setSyncStatus('error');
-            console.error("Sync failed:", error);
+            console.error("Error fetching and saving services:", error);
         }
+        setLoading(false);
     };
 
     const filteredServices = services.filter(s => s.name?.toLowerCase().includes(searchTerm.toLowerCase()));
-
-    const syncIcon = syncStatus === 'syncing' ? <Spinner /> : syncStatus === 'success' ? <CheckCircleIcon /> : <SyncIcon />;
     
     return (
         <div>
@@ -531,25 +553,25 @@ const ManageServicesPage = () => {
                 <div className="flex items-end justify-between">
                     <div className="flex-1 space-y-2">
                         <h2 className="text-xl font-bold">Synchronize Services from Provider</h2>
-                        <p className="text-sm text-gray-500">Fetches all available services from the 5sim.net API and saves them to your database.</p>
-                        <label className="block text-sm font-medium text-gray-700 mt-4">Profit Margin (%)</label>
-                        <input 
-                            type="number" 
-                            min="0"
-                            value={commission}
-                            onChange={(e) => setCommission(e.target.value)}
+                        <p className="text-sm text-gray-500">Fetches all available services and prices from the provider API and saves them to your database.</p>
+                        <select 
+                            value={selectedProvider} 
+                            onChange={(e) => setSelectedProvider(e.target.value)} 
                             className="w-40 border-gray-300 rounded-md"
-                        />
+                        >
+                            <option value="">Select Provider</option>
+                            {providers.map(p => (
+                                <option key={p.id} value={p.name}>{p.name}</option>
+                            ))}
+                        </select>
                     </div>
-                    <Button onClick={handleSync} disabled={syncStatus === 'syncing'}>
+                    <Button onClick={fetchAndSaveServices} disabled={loading || !selectedProvider}>
                         <div className="flex items-center space-x-2">
-                            {syncIcon}
-                            <span>Sync with Provider</span>
+                            {loading ? <Spinner /> : <SyncIcon />}
+                            <span>Sync Services</span>
                         </div>
                     </Button>
                 </div>
-                {syncStatus === 'success' && <p className="text-green-600 mt-4 flex items-center"><CheckCircleIcon className="w-5 h-5 mr-2" /> Sync successful!</p>}
-                {syncStatus === 'error' && <p className="text-red-600 mt-4 flex items-center"><AlertCircleIcon className="w-5 h-5 mr-2" /> Sync failed. Check console for details.</p>}
             </Card>
             <Card>
                 <div className="p-4 flex justify-between items-center">
@@ -567,6 +589,7 @@ const ManageServicesPage = () => {
                                     <th className="px-6 py-3 text-left">Name</th>
                                     <th className="px-6 py-3 text-left">Price</th>
                                     <th className="px-6 py-3 text-left">Provider</th>
+                                    <th className="px-6 py-3 text-left">Original Price</th>
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
@@ -575,76 +598,7 @@ const ManageServicesPage = () => {
                                         <td className="px-6 py-4 flex items-center">{s.icon && <span className="mr-3 text-xl">{s.icon}</span>}{s.name}</td>
                                         <td className="px-6 py-4">{currencySymbol} {convertCurrency(s.price)}</td>
                                         <td className="px-6 py-4">{s.provider}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    )}
-                </div>
-            </Card>
-        </div>
-    );
-};
-
-const ManageApisPage = () => {
-    const [providers, setProviders] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [providerName, setProviderName] = useState('');
-    const [apiKey, setApiKey] = useState('');
-    const [baseUrl, setBaseUrl] = useState('');
-
-    useEffect(() => {
-        const q = query(collection(db, "api_providers"));
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            const providersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setProviders(providersData);
-            setLoading(false);
-        });
-        return () => unsubscribe();
-    }, []);
-
-    const handleAddProvider = async (e) => {
-        e.preventDefault();
-        if (!providerName || !apiKey || !baseUrl) return;
-        await addDoc(collection(db, "api_providers"), {
-            name: providerName, apiKey: apiKey, baseUrl: baseUrl
-        });
-        setProviderName(''); setApiKey(''); setBaseUrl('');
-    };
-    
-    const handleDeleteProvider = async (id) => {
-        if(window.confirm("Are you sure?")) await deleteDoc(doc(db, "api_providers", id));
-    };
-
-    return (
-        <div>
-            <h1 className="text-3xl font-bold mb-6">Manage API Providers</h1>
-            <Card className="p-6 mb-8">
-                <h2 className="text-xl font-bold mb-4">Add New Provider</h2>
-                <form onSubmit={handleAddProvider} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-                    <input value={providerName} onChange={e => setProviderName(e.target.value)} placeholder="Provider Name (e.g., 5sim)" className="md:col-span-1 border-gray-300 rounded-md" />
-                    <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="API Key" className="md:col-span-1 border-gray-300 rounded-md" />
-                    <input value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder="Base URL" className="md:col-span-1 border-gray-300 rounded-md" />
-                    <Button type="submit" className="md:col-span-1 w-full">Add Provider</Button>
-                </form>
-            </Card>
-            <Card>
-                <div className="overflow-x-auto">
-                    {loading ? <Spinner /> : (
-                        <table className="min-w-full">
-                            <thead className="bg-gray-50">
-                                <tr>
-                                    <th className="px-6 py-3 text-left">Name</th>
-                                    <th className="px-6 py-3 text-left">Base URL</th>
-                                    <th className="px-6 py-3 text-left">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody className="bg-white divide-y divide-gray-200">
-                                {providers.map(provider => (
-                                    <tr key={provider.id}>
-                                        <td className="px-6 py-4">{provider.name}</td>
-                                        <td className="px-6 py-4">{provider.baseUrl}</td>
-                                        <td className="px-6 py-4"><button onClick={() => handleDeleteProvider(provider.id)} className="text-red-600 hover:text-red-900"><TrashIcon /></button></td>
+                                        <td className="px-6 py-4">{s.originalPrice ? `${currencySymbol} ${convertCurrency(s.originalPrice)}` : 'N/A'}</td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -658,62 +612,114 @@ const ManageApisPage = () => {
 
 const ManageServersPage = () => {
     const [servers, setServers] = useState([]);
+    const [providers, setProviders] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [serverName, setServerName] = useState('');
-    const [serverLocation, setServerLocation] = useState('');
+    const [selectedProvider, setSelectedProvider] = useState('');
+    const [searchTerm, setSearchTerm] = useState('');
 
     useEffect(() => {
-        const q = query(collection(db, "servers"));
-        const unsubscribe = onSnapshot(q, (snapshot) => {
+        const unsubServers = onSnapshot(collection(db, "servers"), (snapshot) => {
             setServers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
             setLoading(false);
         });
-        return () => unsubscribe();
+        const unsubProviders = onSnapshot(collection(db, "api_providers"), (snapshot) => {
+            setProviders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        });
+        return () => { unsubServers(); unsubProviders(); };
     }, []);
 
-    const handleAddServer = async (e) => {
-        e.preventDefault();
-        if (!serverName) return;
-        await addDoc(collection(db, "servers"), {
-            name: serverName, location: serverLocation, status: 'active'
-        });
-        setServerName(''); setServerLocation('');
+    const fetchAndSaveServers = async () => {
+        if (!selectedProvider) return;
+        setLoading(true);
+        try {
+            const response = await fetch('/.netlify/functions/api-proxy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ provider: selectedProvider, endpoint: '/guest/countries' }),
+            });
+            const result = await response.json();
+            if (response.ok && result) {
+                const batch = writeBatch(db);
+                // First, delete all existing servers for this provider
+                const existingServers = await getDocs(query(collection(db, "servers"), where("provider", "==", selectedProvider)));
+                existingServers.forEach(doc => batch.delete(doc.ref));
+
+                Object.entries(result).forEach(([name, details]) => {
+                    const serverRef = doc(collection(db, "servers"));
+                    const isoCode = Object.keys(details.iso)[0] || 'any';
+                    batch.set(serverRef, {
+                        name: name,
+                        location: details.text_en,
+                        iso: isoCode,
+                        status: 'active',
+                        provider: selectedProvider
+                    });
+                });
+                await batch.commit();
+            } else {
+                throw new Error(result.error || "Failed to fetch servers");
+            }
+        } catch (error) {
+            console.error("Error fetching and saving servers:", error);
+        }
+        setLoading(false);
     };
 
-    const handleDeleteServer = async (id) => {
-        if(window.confirm("Are you sure?")) await deleteDoc(doc(db, "servers", id));
-    };
+    const filteredServers = servers.filter(s => s.location?.toLowerCase().includes(searchTerm.toLowerCase()));
 
     return (
         <div>
             <h1 className="text-3xl font-bold mb-6">Manage Servers (Countries)</h1>
             <Card className="p-6 mb-8">
-                <h2 className="text-xl font-bold mb-4">Add New Server/Country</h2>
-                <form onSubmit={handleAddServer} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-                    <input value={serverName} onChange={e => setServerName(e.target.value)} placeholder="Country Name (e.g., england)" className="md:col-span-1 border-gray-300 rounded-md" />
-                    <input value={serverLocation} onChange={e => setServerLocation(e.target.value)} placeholder="Display Location (e.g., UK)" className="md:col-span-1 border-gray-300 rounded-md" />
-                    <Button type="submit" className="md:col-span-1 w-full">Add Server</Button>
-                </form>
+                <div className="flex items-end justify-between">
+                    <div className="flex-1 space-y-2">
+                        <h2 className="text-xl font-bold">Synchronize Servers from Provider</h2>
+                        <p className="text-sm text-gray-500">Fetches all available countries from the provider API and saves them to your database.</p>
+                        <select 
+                            value={selectedProvider} 
+                            onChange={(e) => setSelectedProvider(e.target.value)} 
+                            className="w-40 border-gray-300 rounded-md"
+                        >
+                            <option value="">Select Provider</option>
+                            {providers.map(p => (
+                                <option key={p.id} value={p.name}>{p.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <Button onClick={fetchAndSaveServers} disabled={loading || !selectedProvider}>
+                        <div className="flex items-center space-x-2">
+                            {loading ? <Spinner /> : <SyncIcon />}
+                            <span>Sync Servers</span>
+                        </div>
+                    </Button>
+                </div>
             </Card>
             <Card>
+                <div className="p-4 flex justify-between items-center">
+                    <h2 className="text-xl font-bold">Existing Servers ({servers.length})</h2>
+                    <div className="w-1/3 relative">
+                        <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search countries..." className="w-full border-gray-300 rounded-md shadow-sm pl-10" />
+                        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    </div>
+                </div>
                 <div className="overflow-x-auto">
                     {loading ? <Spinner /> : (
                         <table className="min-w-full">
                             <thead className="bg-gray-50">
                                 <tr>
+                                    <th className="px-6 py-3 text-left">Flag</th>
                                     <th className="px-6 py-3 text-left">Name (for API)</th>
                                     <th className="px-6 py-3 text-left">Location (for Display)</th>
-                                    <th className="px-6 py-3 text-left">Status</th>
-                                    <th className="px-6 py-3 text-left">Actions</th>
+                                    <th className="px-6 py-3 text-left">Provider</th>
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
-                                {servers.map(server => (
+                                {filteredServers.map(server => (
                                     <tr key={server.id}>
+                                        <td className="px-6 py-4">{server.iso && <img src={`https://flagcdn.com/w20/${server.iso.toLowerCase()}.png`} alt={`${server.location} flag`} className="w-5 h-auto" />}</td>
                                         <td className="px-6 py-4">{server.name}</td>
                                         <td className="px-6 py-4">{server.location}</td>
-                                        <td className="px-6 py-4"><span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">{server.status}</span></td>
-                                        <td className="px-6 py-4"><button onClick={() => handleDeleteServer(server.id)} className="text-red-600 hover:text-red-900"><TrashIcon /></button></td>
+                                        <td className="px-6 py-4">{server.provider}</td>
                                     </tr>
                                 ))}
                             </tbody>
