@@ -485,8 +485,10 @@ const ManageServicesPage = () => {
     const [services, setServices] = useState([]);
     const [providers, setProviders] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [selectedServices, setSelectedServices] = useState([]);
     const [selectedProvider, setSelectedProvider] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
+    const [commission, setCommission] = useState(20);
     const { convertCurrency, currencySymbol } = useCurrency();
     
     useEffect(() => {
@@ -517,15 +519,12 @@ const ManageServicesPage = () => {
             const result = await response.json();
             if (response.ok && result) {
                 const batch = writeBatch(db);
-                // First, delete all existing services for this provider to avoid duplicates
                 const existingServices = await getDocs(query(collection(db, "services"), where("provider", "==", selectedProvider)));
                 existingServices.forEach(doc => batch.delete(doc.ref));
 
                 Object.entries(result).forEach(([name, details]) => {
                     const serviceRef = doc(collection(db, "services"));
-                    // Use a fixed profit margin for now, or add a field to the UI
-                    const profitMargin = 0.20;
-                    const newPrice = details.Price * (1 + profitMargin);
+                    const newPrice = details.Price * (1 + commission / 100);
                     batch.set(serviceRef, {
                         name: name.charAt(0).toUpperCase() + name.slice(1),
                         price: parseFloat(newPrice.toFixed(2)),
@@ -544,6 +543,28 @@ const ManageServicesPage = () => {
         setLoading(false);
     };
 
+    const handleSelectService = (id) => {
+        setSelectedServices(prev => prev.includes(id) ? prev.filter(sId => sId !== id) : [...prev, id]);
+    };
+
+    const handleSelectAllServices = (e) => {
+        if (e.target.checked) {
+            setSelectedServices(services.map(s => s.id));
+        } else {
+            setSelectedServices([]);
+        }
+    };
+
+    const handleBulkDeleteServices = async () => {
+        if (selectedServices.length === 0 || !window.confirm(`Delete ${selectedServices.length} selected services?`)) return;
+        const batch = writeBatch(db);
+        selectedServices.forEach(id => {
+            batch.delete(doc(db, "services", id));
+        });
+        await batch.commit();
+        setSelectedServices([]);
+    };
+
     const filteredServices = services.filter(s => s.name?.toLowerCase().includes(searchTerm.toLowerCase()));
     
     return (
@@ -554,16 +575,28 @@ const ManageServicesPage = () => {
                     <div className="flex-1 space-y-2">
                         <h2 className="text-xl font-bold">Synchronize Services from Provider</h2>
                         <p className="text-sm text-gray-500">Fetches all available services and prices from the provider API and saves them to your database.</p>
-                        <select 
-                            value={selectedProvider} 
-                            onChange={(e) => setSelectedProvider(e.target.value)} 
-                            className="w-40 border-gray-300 rounded-md"
-                        >
-                            <option value="">Select Provider</option>
-                            {providers.map(p => (
-                                <option key={p.id} value={p.name}>{p.name}</option>
-                            ))}
-                        </select>
+                        <div className="flex items-center space-x-4">
+                            <select 
+                                value={selectedProvider} 
+                                onChange={(e) => setSelectedProvider(e.target.value)} 
+                                className="w-40 border-gray-300 rounded-md"
+                            >
+                                <option value="">Select Provider</option>
+                                {providers.map(p => (
+                                    <option key={p.id} value={p.name}>{p.name}</option>
+                                ))}
+                            </select>
+                            <div className="flex items-center">
+                                <label className="text-sm font-medium text-gray-700 mr-2">Profit %</label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    value={commission}
+                                    onChange={(e) => setCommission(e.target.value)}
+                                    className="w-20 border-gray-300 rounded-md"
+                                />
+                            </div>
+                        </div>
                     </div>
                     <Button onClick={fetchAndSaveServices} disabled={loading || !selectedProvider}>
                         <div className="flex items-center space-x-2">
@@ -576,9 +609,14 @@ const ManageServicesPage = () => {
             <Card>
                 <div className="p-4 flex justify-between items-center">
                     <h2 className="text-xl font-bold">Existing Services ({services.length})</h2>
-                    <div className="w-1/3 relative">
-                        <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search services..." className="w-full border-gray-300 rounded-md shadow-sm pl-10" />
-                        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <div className="flex items-center space-x-4">
+                        <div className="relative">
+                            <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search services..." className="w-full border-gray-300 rounded-md shadow-sm pl-10" />
+                            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                        </div>
+                        {selectedServices.length > 0 && (
+                            <Button onClick={handleBulkDeleteServices} className="bg-red-600 hover:bg-red-700">Delete Selected ({selectedServices.length})</Button>
+                        )}
                     </div>
                 </div>
                 <div className="overflow-x-auto">
@@ -586,6 +624,7 @@ const ManageServicesPage = () => {
                         <table className="min-w-full">
                             <thead className="bg-gray-50">
                                 <tr>
+                                    <th className="px-6 py-3"><input type="checkbox" onChange={handleSelectAllServices} checked={selectedServices.length === services.length && services.length > 0} /></th>
                                     <th className="px-6 py-3 text-left">Name</th>
                                     <th className="px-6 py-3 text-left">Price</th>
                                     <th className="px-6 py-3 text-left">Provider</th>
@@ -595,6 +634,7 @@ const ManageServicesPage = () => {
                             <tbody className="bg-white divide-y divide-gray-200">
                                 {filteredServices.map(s => (
                                     <tr key={s.id}>
+                                        <td className="px-6 py-4"><input type="checkbox" checked={selectedServices.includes(s.id)} onChange={() => handleSelectService(s.id)} /></td>
                                         <td className="px-6 py-4 flex items-center">{s.icon && <span className="mr-3 text-xl">{s.icon}</span>}{s.name}</td>
                                         <td className="px-6 py-4">{currencySymbol} {convertCurrency(s.price)}</td>
                                         <td className="px-6 py-4">{s.provider}</td>
@@ -614,6 +654,7 @@ const ManageServersPage = () => {
     const [servers, setServers] = useState([]);
     const [providers, setProviders] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [selectedServers, setSelectedServers] = useState([]);
     const [selectedProvider, setSelectedProvider] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
 
@@ -640,7 +681,6 @@ const ManageServersPage = () => {
             const result = await response.json();
             if (response.ok && result) {
                 const batch = writeBatch(db);
-                // First, delete all existing servers for this provider
                 const existingServers = await getDocs(query(collection(db, "servers"), where("provider", "==", selectedProvider)));
                 existingServers.forEach(doc => batch.delete(doc.ref));
 
@@ -664,6 +704,29 @@ const ManageServersPage = () => {
         }
         setLoading(false);
     };
+
+    const handleSelectServer = (id) => {
+        setSelectedServers(prev => prev.includes(id) ? prev.filter(sId => sId !== id) : [...prev, id]);
+    };
+
+    const handleSelectAllServers = (e) => {
+        if (e.target.checked) {
+            setSelectedServers(servers.map(s => s.id));
+        } else {
+            setSelectedServers([]);
+        }
+    };
+    
+    const handleBulkDeleteServers = async () => {
+        if (selectedServers.length === 0 || !window.confirm(`Delete ${selectedServers.length} selected servers?`)) return;
+        const batch = writeBatch(db);
+        selectedServers.forEach(id => {
+            batch.delete(doc(db, "servers", id));
+        });
+        await batch.commit();
+        setSelectedServers([]);
+    };
+
 
     const filteredServers = servers.filter(s => s.location?.toLowerCase().includes(searchTerm.toLowerCase()));
 
@@ -697,9 +760,14 @@ const ManageServersPage = () => {
             <Card>
                 <div className="p-4 flex justify-between items-center">
                     <h2 className="text-xl font-bold">Existing Servers ({servers.length})</h2>
-                    <div className="w-1/3 relative">
-                        <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search countries..." className="w-full border-gray-300 rounded-md shadow-sm pl-10" />
-                        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <div className="flex items-center space-x-4">
+                        <div className="relative">
+                            <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search countries..." className="w-full border-gray-300 rounded-md shadow-sm pl-10" />
+                            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                        </div>
+                        {selectedServers.length > 0 && (
+                            <Button onClick={handleBulkDeleteServers} className="bg-red-600 hover:bg-red-700">Delete Selected ({selectedServers.length})</Button>
+                        )}
                     </div>
                 </div>
                 <div className="overflow-x-auto">
@@ -707,6 +775,7 @@ const ManageServersPage = () => {
                         <table className="min-w-full">
                             <thead className="bg-gray-50">
                                 <tr>
+                                    <th className="px-6 py-3"><input type="checkbox" onChange={handleSelectAllServers} checked={selectedServers.length === servers.length && servers.length > 0} /></th>
                                     <th className="px-6 py-3 text-left">Flag</th>
                                     <th className="px-6 py-3 text-left">Name (for API)</th>
                                     <th className="px-6 py-3 text-left">Location (for Display)</th>
@@ -716,6 +785,7 @@ const ManageServersPage = () => {
                             <tbody className="bg-white divide-y divide-gray-200">
                                 {filteredServers.map(server => (
                                     <tr key={server.id}>
+                                        <td className="px-6 py-4"><input type="checkbox" checked={selectedServers.includes(server.id)} onChange={() => handleSelectServer(server.id)} /></td>
                                         <td className="px-6 py-4">{server.iso && <img src={`https://flagcdn.com/w20/${server.iso.toLowerCase()}.png`} alt={`${server.location} flag`} className="w-5 h-auto" />}</td>
                                         <td className="px-6 py-4">{server.name}</td>
                                         <td className="px-6 py-4">{server.location}</td>
