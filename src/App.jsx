@@ -113,13 +113,14 @@ const Pagination = ({ currentPage, totalPages, onPageChange }) => {
 };
 
 // --- API Call Function ---
-const apiCall = async (endpoint, method = 'GET', body = null) => {
+const apiCall = async (action, payload) => {
     try {
-        const response = await fetch(`/.netlify/functions/${endpoint}`, {
-            method: method,
-            body: body ? JSON.stringify(body) : null,
+        const response = await fetch(`/.netlify/functions/api-proxy`, {
+            method: 'POST',
+            body: JSON.stringify({ action, payload }),
             headers: {
                 'Content-Type': 'application/json',
+                // Admin token is implicitly handled by the context/user auth state
             },
         });
         if (!response.ok) {
@@ -529,11 +530,7 @@ const ManageServicesPage = () => {
     const handleSync = async () => {
         setLoading(prev => ({ ...prev, sync: true }));
         try {
-            const result = await fetch('/.netlify/functions/sync-provider-data', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ profitPercentage: Number(profitPercentage) })
-            }).then(res => res.json());
+            const result = await apiCall("syncProviderData", { provider: '5sim' });
 
             if (result.error) {
                 alert(`Sync failed: ${result.error}`);
