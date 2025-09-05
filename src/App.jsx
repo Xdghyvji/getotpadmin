@@ -887,45 +887,68 @@ const ManageOperatorsPage = () => {
             const allServers = serversDocs.docs.map(doc => doc.data());
             const allServices = servicesDocs.docs.map(doc => doc.data());
 
-            const batch = writeBatch(db);
-            // Clear the existing operators table
+            // Use a promise queue to manage concurrent API calls and prevent timeouts
+            const promises = [];
+            const BATCH_SIZE = 500; // Firestore batch size limit is 500
+            let batch = writeBatch(db);
+            let batchCount = 0;
+
             const existingOps = await getDocs(collection(db, "operators"));
             existingOps.forEach(doc => batch.delete(doc.ref));
+            await batch.commit();
 
             for (const provider of allProviders) {
                 for (const server of allServers) {
                     for (const service of allServices) {
-                        try {
-                            const response = await fetch('/.netlify/functions/api-proxy', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ 
-                                    provider: provider.name, 
-                                    endpoint: `/guest/prices?country=${server.name}&product=${service.name.toLowerCase()}` 
-                                }),
-                            });
-                            const result = await response.json();
-                            if (response.ok && result && result[server.name] && result[server.name][service.name.toLowerCase()]) {
-                                Object.entries(result[server.name][service.name.toLowerCase()]).forEach(([opName, opDetails]) => {
-                                    const operatorRef = doc(collection(db, "operators"));
-                                    batch.set(operatorRef, {
-                                        name: opName,
-                                        provider: provider.name,
-                                        server: server.name,
-                                        service: service.name.toLowerCase(),
-                                        price: opDetails.cost,
-                                        count: opDetails.count
+                        promises.push(
+                            (async () => {
+                                try {
+                                    const response = await fetch('/.netlify/functions/api-proxy', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ 
+                                            provider: provider.name, 
+                                            endpoint: `/guest/prices?country=${server.name}&product=${service.name.toLowerCase()}` 
+                                        }),
                                     });
-                                });
-                            }
-                        } catch (error) {
-                            console.error(`Failed to fetch operators for ${provider.name}/${server.name}/${service.name}:`, error);
-                        }
+                                    const result = await response.json();
+                                    
+                                    if (response.ok && result && result[server.name] && result[server.name][service.name.toLowerCase()]) {
+                                        Object.entries(result[server.name][service.name.toLowerCase()]).forEach(([opName, opDetails]) => {
+                                            if (batchCount >= BATCH_SIZE) {
+                                                console.log("Committing batch...");
+                                                batch.commit();
+                                                batch = writeBatch(db);
+                                                batchCount = 0;
+                                            }
+
+                                            const operatorRef = doc(collection(db, "operators"));
+                                            batch.set(operatorRef, {
+                                                name: opName,
+                                                provider: provider.name,
+                                                server: server.name,
+                                                service: service.name.toLowerCase(),
+                                                price: opDetails.cost,
+                                                count: opDetails.count
+                                            });
+                                            batchCount++;
+                                        });
+                                    }
+                                } catch (error) {
+                                    console.error(`Failed to fetch operators for ${provider.name}/${server.name}/${service.name}:`, error);
+                                }
+                            })()
+                        );
                     }
                 }
             }
 
-            await batch.commit();
+            await Promise.all(promises);
+            if (batchCount > 0) {
+                console.log("Committing final batch...");
+                await batch.commit();
+            }
+
             setLoading(false);
         } catch (error) {
             console.error("Error during full operator sync:", error);
