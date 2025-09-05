@@ -95,6 +95,8 @@ const SyncIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height
 const CheckCircleIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-8.77"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>;
 const AlertCircleIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>;
 const PhoneIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-4.73-4.73A19.79 19.79 0 0 1 2 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.45 2.18-.75 4.93-1.8 6.09-.9.9-.11 2.21.36 2.68a18.25 18.25 0 0 0 6.09 6.09c.47.47 1.78 1.26 2.68.36 1.16-1.05 3.91-2.25 6.09-1.8a2 2 0 0 1 1.72 2z"></path></svg>;
+const GlobeIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path><path d="M2.5 12h19."></path></svg>;
+
 
 // --- Reusable UI Components ---
 const Card = ({ children, className = '' }) => <div className={`bg-white rounded-lg shadow-sm ${className}`}>{children}</div>;
@@ -825,7 +827,6 @@ const ManageOperatorsPage = () => {
         const unsubServices = onSnapshot(collection(db, "services"), (snapshot) => {
             setServices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
         });
-        // Listen for changes in the operators collection.
         const unsubOperators = onSnapshot(collection(db, "operators"), (snapshot) => {
             setOperators(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
             setLoading(false);
@@ -848,7 +849,6 @@ const ManageOperatorsPage = () => {
             const result = await response.json();
             if (response.ok && result) {
                 const batch = writeBatch(db);
-                // Delete existing operators for this service/server pair
                 const existingOps = await getDocs(query(collection(db, "operators"), where("provider", "==", selectedProvider), where("server", "==", selectedServer), where("service", "==", selectedService)));
                 existingOps.forEach(doc => batch.delete(doc.ref));
 
@@ -875,6 +875,64 @@ const ManageOperatorsPage = () => {
         }
         setLoading(false);
     };
+
+    const fetchAndSaveAllOperators = async () => {
+        setLoading(true);
+        try {
+            const providersDocs = await getDocs(collection(db, "api_providers"));
+            const serversDocs = await getDocs(collection(db, "servers"));
+            const servicesDocs = await getDocs(collection(db, "services"));
+
+            const allProviders = providersDocs.docs.map(doc => doc.data());
+            const allServers = serversDocs.docs.map(doc => doc.data());
+            const allServices = servicesDocs.docs.map(doc => doc.data());
+
+            const batch = writeBatch(db);
+            // Clear the existing operators table
+            const existingOps = await getDocs(collection(db, "operators"));
+            existingOps.forEach(doc => batch.delete(doc.ref));
+
+            for (const provider of allProviders) {
+                for (const server of allServers) {
+                    for (const service of allServices) {
+                        try {
+                            const response = await fetch('/.netlify/functions/api-proxy', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ 
+                                    provider: provider.name, 
+                                    endpoint: `/guest/prices?country=${server.name}&product=${service.name.toLowerCase()}` 
+                                }),
+                            });
+                            const result = await response.json();
+                            if (response.ok && result && result[server.name] && result[server.name][service.name.toLowerCase()]) {
+                                Object.entries(result[server.name][service.name.toLowerCase()]).forEach(([opName, opDetails]) => {
+                                    const operatorRef = doc(collection(db, "operators"));
+                                    batch.set(operatorRef, {
+                                        name: opName,
+                                        provider: provider.name,
+                                        server: server.name,
+                                        service: service.name.toLowerCase(),
+                                        price: opDetails.cost,
+                                        count: opDetails.count
+                                    });
+                                });
+                            }
+                        } catch (error) {
+                            console.error(`Failed to fetch operators for ${provider.name}/${server.name}/${service.name}:`, error);
+                        }
+                    }
+                }
+            }
+
+            await batch.commit();
+            setLoading(false);
+        } catch (error) {
+            console.error("Error during full operator sync:", error);
+            setLoading(false);
+        }
+    };
+
 
     const handleSelectOperator = (id) => {
         setSelectedOperators(prev => prev.includes(id) ? prev.filter(oId => oId !== id) : [...prev, id]);
@@ -948,6 +1006,16 @@ const ManageOperatorsPage = () => {
                         </div>
                     </Button>
                 </div>
+            </Card>
+             <Card className="p-6 mb-8">
+                <h2 className="text-xl font-bold mb-4">One-Click Full Sync</h2>
+                <p className="text-sm text-gray-500 mb-4">Fetches all operators for all services and countries from the provider API and saves them to your database.</p>
+                <Button onClick={fetchAndSaveAllOperators} disabled={loading || providers.length === 0 || servers.length === 0 || services.length === 0}>
+                     <div className="flex items-center space-x-2">
+                        {loading ? <Spinner /> : <SyncIcon />}
+                        <span>Sync All Operators</span>
+                    </div>
+                </Button>
             </Card>
             <Card>
                 <div className="p-4 flex justify-between items-center">
