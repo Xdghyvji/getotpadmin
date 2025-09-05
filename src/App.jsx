@@ -825,7 +825,12 @@ const ManageOperatorsPage = () => {
         const unsubServices = onSnapshot(collection(db, "services"), (snapshot) => {
             setServices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
         });
-        return () => { unsub(); unsubServers(); unsubServices(); };
+        // Listen for changes in the operators collection.
+        const unsubOperators = onSnapshot(collection(db, "operators"), (snapshot) => {
+            setOperators(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+            setLoading(false);
+        });
+        return () => { unsub(); unsubServers(); unsubServices(); unsubOperators() };
     }, []);
 
     const fetchAndSaveOperators = async () => {
